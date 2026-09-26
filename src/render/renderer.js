@@ -1,7 +1,8 @@
 // renderer.js — WebGL2 描画
-// テクスチャは2枚：
+// テクスチャは3枚：
 //   写真：パディング済みグリッド全体の画像
 //   src ：cols×rows の R32I。セルごとに「描く写真タイルの番号」（毎世代更新）
+//   flat：cols×rows の RGBA8。タイルごとの塗りつぶしの色（A = 255 なら塗る）
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
 
 const VS = `#version 300 es
@@ -17,12 +18,14 @@ precision highp int;
 precision highp isampler2D;
 uniform sampler2D uPhoto;
 uniform isampler2D uSrc;
+uniform sampler2D uFlat;
+uniform bool uFlatOn;
 uniform int uCols;
 uniform vec2 uGrid;     // (cols, rows)
 uniform vec2 uTexSize;  // 写真テクスチャの寸法
 uniform float uCanvasH;
 uniform vec2 uOff;      // キャンバス座標(px) → グリッド座標(セル) の変換：g = uOff + p * uScale
-uniform float uScale;
+uniform vec2 uScale;
 uniform vec2 uImgMin;   // 元写真の範囲（グリッド座標）。外側は余白
 uniform vec2 uImgMax;
 out vec4 outColor;
@@ -33,7 +36,13 @@ void main() {
   if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
   int s = texelFetch(uSrc, c, 0).r;
-  vec2 sc = vec2(float(s % uCols), float(s / uCols));
+  ivec2 si = ivec2(s % uCols, s / uCols);
+  vec2 sc = vec2(si);
+  // 塗りつぶし：元の位置にないタイル（CA で運ばれてきたもの）だけを塗る
+  if (uFlatOn && si != c) {
+    vec4 f = texelFetch(uFlat, si, 0);
+    if (f.a > 0.5) { outColor = vec4(f.rgb, 1.0); return; }
+  }
   // マス内の位置。隣のマスがにじまないよう、マスの内側半テクセルにクランプする
   vec2 texCell = uTexSize / uGrid;
   vec2 local = clamp(fract(g) * texCell, vec2(0.5), texCell - 0.5);
@@ -61,9 +70,9 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog;
     this.u = {};
-    for (const n of ['uPhoto', 'uSrc', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uFlatOn', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
     this.vao = gl.createVertexArray();
-    this.photoTex = null; this.srcTex = null; this.grid = null;
+    this.photoTex = null; this.srcTex = null; this.flatTex = null; this.flatOn = false; this.grid = null;
   }
 
   // 写真テクスチャの長辺の上限
@@ -74,6 +83,7 @@ export class Renderer {
     const gl = this.gl;
     if (this.photoTex) gl.deleteTexture(this.photoTex);
     if (this.srcTex) gl.deleteTexture(this.srcTex);
+    if (this.flatTex) gl.deleteTexture(this.flatTex);
     this.grid = layout;
     this.texSize = [photo.width, photo.height];
 
@@ -92,6 +102,23 @@ export class Renderer {
     gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32I, layout.cols, layout.rows);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    this.flatTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.flatTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, layout.cols, layout.rows);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this.flatOn = false;
+  }
+
+  /** colors = flatColors の結果（タイルごとの RGBA）。null なら塗らない */
+  setFlat(colors) {
+    this.flatOn = !!colors;
+    if (!colors) return;
+    const gl = this.gl, { cols, rows } = this.grid;
+    gl.bindTexture(gl.TEXTURE_2D, this.flatTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, colors);
   }
 
   setSrc(src) {
@@ -116,28 +143,31 @@ export class Renderer {
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (!this.grid) return;
-    const { cols, rows, ox, oy, W, H, cell } = this.grid;
+    const { cols, rows, ox, oy, W, H, cw, ch } = this.grid;
     // 写真 1px をキャンバス何 px で描くか
     const s = (fit === 'cover' ? Math.max : Math.min)(c.width / W, c.height / H);
     const dx = (c.width - W * s) / 2, dy = (c.height - H * s) / 2;
-    const scale = 1 / (s * cell); // キャンバス 1px = グリッド何セルか
-    const min = [ox / cell, oy / cell];
+    const scale = [1 / (s * cw), 1 / (s * ch)]; // キャンバス 1px = グリッド何セルか
+    const min = [ox / cw, oy / ch];
 
     gl.useProgram(this.prog);
     gl.bindVertexArray(this.vao);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photoTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.flatTex);
     const u = this.u;
     gl.uniform1i(u.uPhoto, 0);
     gl.uniform1i(u.uSrc, 1);
+    gl.uniform1i(u.uFlat, 2);
+    gl.uniform1i(u.uFlatOn, this.flatOn ? 1 : 0);
     gl.uniform1i(u.uCols, cols);
     gl.uniform2f(u.uGrid, cols, rows);
     gl.uniform2f(u.uTexSize, this.texSize[0], this.texSize[1]);
     gl.uniform1f(u.uCanvasH, c.height);
-    gl.uniform2f(u.uOff, min[0] - dx * scale, min[1] - dy * scale);
-    gl.uniform1f(u.uScale, scale);
+    gl.uniform2f(u.uOff, min[0] - dx * scale[0], min[1] - dy * scale[1]);
+    gl.uniform2f(u.uScale, scale[0], scale[1]);
     gl.uniform2f(u.uImgMin, min[0], min[1]);
-    gl.uniform2f(u.uImgMax, min[0] + W / cell, min[1] + H / cell);
+    gl.uniform2f(u.uImgMax, min[0] + W / cw, min[1] + H / ch);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 }

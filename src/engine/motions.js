@@ -73,7 +73,10 @@ function rulesChanged(g) {
 function stepLines(g, sim, prev, next, flow) {
   const { cols, K, cls, reps } = sim;
   const rule = g.table;
-  const { x, y, w, h, dir } = g;
+  const { x, y, w, h } = g;
+  // 実際に流れる向き：進行方向が固定されていればそれ、ALL なら領域の向き
+  const dir = sim.fixedDir ?? g.dir;
+  if (dir !== g.lastDir) { g.lastDir = dir; g.inj = -1; } // 向きが変わったら流し込みは打ち切る
   const vertical = dir < 2; // 下・上へ流れる = 1行が横に並ぶ
   const lineLen = vertical ? w : h, lineCount = vertical ? h : w;
   // start：先頭の行の0番目のセル、di：行内で隣へ進む差、dt：下流の行へ進む差

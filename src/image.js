@@ -5,12 +5,12 @@ export async function loadBitmap(blob) {
 }
 
 /**
- * グリッド配置。入力 W×H を覆うだけのマス（cell×cell）を並べ、中央寄せにする（四辺のマスが少しずつ欠ける）。
+ * グリッド配置。入力 W×H を覆うだけのマス（cw×ch）を並べ、中央寄せにする（四辺のマスが少しずつ欠ける）。
  */
-export function gridLayout(W, H, cell) {
-  const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
-  const GW = cols * cell, GH = rows * cell;
-  return { cols, rows, GW, GH, ox: Math.floor((GW - W) / 2), oy: Math.floor((GH - H) / 2), W, H, cell };
+export function gridLayout(W, H, cw, ch) {
+  const cols = Math.ceil(W / cw), rows = Math.ceil(H / ch);
+  const GW = cols * cw, GH = rows * ch;
+  return { cols, rows, GW, GH, ox: Math.floor((GW - W) / 2), oy: Math.floor((GH - H) / 2), W, H, cw, ch };
 }
 
 // マス目がちょうど収まる大きさ (GW×GH) のキャンバスに、元画像を中央寄せで置く。

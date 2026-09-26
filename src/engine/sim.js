@@ -13,6 +13,9 @@ export const ENGINE_VERSION = 1;
 export const TEMPOS = [2, 1, 1 / 2, 1 / 3, 1 / 4, 1 / 5];
 export const TEMPO_LABELS = ['×2', '×1', '×1/2', '×1/3', '×1/4', '×1/5'];
 
+// 進行方向 → 向きの番号（motions.js の g.dir と同じ：0=下へ 1=上へ 2=右へ 3=左へ）
+export const DIRECTIONS = { down: 0, up: 1, right: 2, left: 3 };
+
 // GUI に出さない内部値
 export const ENGINE_DEFAULTS = {
   // 解析
@@ -37,6 +40,7 @@ export const ENGINE_DEFAULTS = {
   tempoSlow: 4,        // 〃 最遅
   tempoHoldMin: 100, tempoHoldMax: 500, // テンポを引き直す間隔（世代）
   dirChangeProb: 0.3,  // テンポを引き直すとき、流れる向きも変える確率
+  direction: 'all',    // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'。固定中は E の向き変更も効かない
   // 領域
   maxDepth: 7,
   minDepth: 2,
@@ -51,7 +55,7 @@ export class Simulation {
   /**
    * P = { seed, K, chaos, motion, ...ENGINE_DEFAULTS }
    *   motion = 'flow'（流れる） | 'ca'（その場で変化）。CA 処理する領域すべてに使う
-   * io = { cols, rows, Ax, Ay, analysis: {data, stride} }
+   * io = { cols, rows, Ax, Ay, analysis: {data, stride}, cw, ch }（cw・ch = 1マスの幅・高さ px。省略時は正方形）
    */
   constructor(P, io) {
     this.P = P = { ...ENGINE_DEFAULTS, ...P };
@@ -61,11 +65,11 @@ export class Simulation {
     const rng = mulberry32(P.seed >>> 0);
 
     const a = analyze(P, io, rng);
-    this.palette = a.palette; this.cls = a.cls; this.reps = a.reps;
+    this.palette = a.palette; this.cls = a.cls; this.reps = a.reps; this.mean = a.mean;
     this.pool = makeRulePool(P.K, P.ruleCount, P.pull, rng);
 
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
-    this.regions = subdivide(P, cols, rows, rng).map(([x, y, w, h], r) => {
+    this.regions = subdivide(P, cols, rows, rng, io.cw ?? 1, io.ch ?? 1).map(([x, y, w, h], r) => {
       const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
       g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
       MOTIONS[g.motion].init(g, this);
@@ -82,6 +86,7 @@ export class Simulation {
     this.nxt = mk();
     this.gen = 0;
     this.setChaos(P.chaos);
+    this.set('direction', P.direction);
   }
 
   // 次の世代から反映される
@@ -95,11 +100,12 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'chaos') this.setChaos(value);
     else this.P[key] = value;
+    if (key === 'direction') this.fixedDir = DIRECTIONS[value]; // 'all' なら undefined
     if (key === 'tempoFast' || key === 'tempoSlow') {
       // 範囲の外にいる領域は、すぐ範囲内に寄せる
       const [lo, hi] = this.tempoRange();
