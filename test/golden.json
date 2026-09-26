@@ -1,0 +1,12 @@
+{
+  "engineVersion": 1,
+  "gens": 500,
+  "cases": {
+    "ca・味付けなし": "de88a2d0",
+    "flow・味付けなし": "4d20a19a",
+    "flow・A＋B（既定）": "c797512e",
+    "flow・A＋B・C": "28d8b9ff",
+    "flow・A＋B・C・E（×2〜×1/5）": "9dbf7f83",
+    "flow・再生中の操作": "ab650756"
+  }
+}

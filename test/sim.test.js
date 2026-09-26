@@ -2,23 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine/sim.js';
-import { mulberry32 } from '../src/engine/rng.js';
-
-// 合成画像（グラデーション＋ノイズ）。1セル = 1px
-function fakeIO(cols, rows, seed = 1) {
-  const r = mulberry32(seed), data = new Uint8ClampedArray(cols * rows * 4);
-  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-    const o = (y * cols + x) * 4;
-    data[o] = (x * 255) / cols; data[o + 1] = (y * 255) / rows; data[o + 2] = r() * 255; data[o + 3] = 255;
-  }
-  return { cols, rows, Ax: 1, Ay: 1, analysis: { data, stride: cols } };
-}
-
-const run = (P, gens, io = fakeIO(80, 60)) => {
-  const s = new Simulation(P, io);
-  for (let i = 0; i < gens; i++) s.step();
-  return s;
-};
+import { fakeIO, run } from './helpers.js';
 
 test('同じ seed なら同じ映像', () => {
   const P = { seed: 42, K: 6, chaos: 0.1 };
