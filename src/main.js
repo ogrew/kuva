@@ -155,7 +155,6 @@ const onRebuild = (b, also) => b.on('change', (ev) => { if (guiSyncing) return; 
 const onLive = (b, key, also) => b.on('change', (ev) => { if (guiSyncing) return; if (sim) sim.set(key, ev.value); also?.(); });
 const tip = (b, text) => { b.element.title = text; };
 
-const cPlay = pane.addButton({ title: '一時停止 (Space)' }).on('click', () => togglePlay());
 
 // 状態（読み取り専用のモニター。左下の別パネル）
 const stats = { status: '', play: '―', gen: 0, rate: 0, grid: '―', regions: 0, seed: 0, image: '―' };
@@ -174,7 +173,6 @@ mon('image', '写真');
 // 基本
 const f1 = pane.addFolder({ title: '基本' });
 onRebuild(num(f1, 'seed', 'seed', 0, 999999, 1));
-f1.addButton({ title: '新しい seed (N)' }).on('click', () => newSeed());
 const cCell = num(f1, 'cellSize', 'cellSize (幅px)', CELL_MIN, CELL_MAX, 1);
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
 const cAspect = num(f1, 'cellAspect', '', 0, ASPECTS.length - 1, 1);
@@ -189,7 +187,6 @@ onLive(cDir, 'direction');
 tip(cDir, 'ALL：領域ごとに違う向き（E では、ときどき変わる）／それ以外：全領域をその向きに流す');
 onLive(num(f1, 'chaos', 'chaos (ランダム混入)', 0, 1, 0.01), 'chaos');
 num(f1, 'gps', '世代/秒', 0.5, 60, 0.5); // 再生ループが毎フレーム読む
-f1.addButton({ title: '最初から (R)' }).on('click', () => rebuild());
 
 // 描画（描画だけに効く。作り直し不要）
 const f2 = pane.addFolder({ title: '描画' });
@@ -240,9 +237,13 @@ onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
 
+// 操作ボタン（一番下にまとめる）
 pane.addBlade({ view: 'separator' });
-pane.addButton({ title: 'フルスクリーン (F)' }).on('click', () => toggleFullscreen());
-pane.addButton({ title: 'GUI を隠す (H)' }).on('click', () => toggleUI());
+const cPlay = pane.addButton({ title: 'PAUSE(Space)' }).on('click', () => togglePlay());
+pane.addButton({ title: 'NEW SEED(N)' }).on('click', () => newSeed());
+pane.addButton({ title: 'RESET(R)' }).on('click', () => rebuild());
+pane.addButton({ title: 'FULLSCREEN(F)' }).on('click', () => toggleFullscreen());
+pane.addButton({ title: 'HIDE GUI(H)' }).on('click', () => toggleUI());
 
 function newSeed() {
   CONFIG.seed = Math.floor(Math.random() * 1e6);
@@ -255,7 +256,7 @@ const AUTO_PAUSED = 'タブが非アクティブになったので一時停止�
 function setPlaying(v) {
   playing = v;
   if (playing && status === AUTO_PAUSED) status = '';
-  cPlay.title = playing ? '一時停止 (Space)' : '再生 (Space)';
+  cPlay.title = playing ? 'PAUSE(Space)' : 'PLAY(Space)';
 }
 
 // タブが見えなくなったら（タブの切り替え・最小化など）一時停止する。見えるようになっても自動では再開しない。
