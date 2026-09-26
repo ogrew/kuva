@@ -18,10 +18,14 @@ export const ENGINE_DEFAULTS = {
   // ルール
   ruleCount: 6,        // 画像全体で使うルールの数
   rulesPerRegion: 3,   // 1領域が持つルール数（この中で切り替わる）
-  pull: 0.5,           // ルールの本来の値が I（写真へ戻る）になる割合。残りは C（保持）
+  pull: 0.5,           // 共有プールのルールの本来の値が I（写真へ戻る）になる割合。残りは C（保持）
   switchProb: 0.01,    // 1世代ごとのルール切替確率
   entropySwitch: 0.15, // 領域がこれより一様になったら強制切替（0〜1）
-  switchCooldown: 24,  // 切替後、次の切替を禁止する世代数
+  switchCooldown: 24,  // 切替後、次の切替を禁止する世代数（ruleMorph が false のとき）
+  ruleMorph: true,     // 実験 A：ルールをぱっと切り替えず、少しずつ変形させる
+  morphMin: 150, morphMax: 500, // 変形にかける世代数
+  holdMax: 200,        // 変形が終わってから次の変形までの最大世代数
+  regionRules: true,   // 実験 B：ルールを領域ごとに作り、性格（GENRES）と写真へ戻る割合も抽選する
   // 領域
   maxDepth: 7,
   minDepth: 2,
@@ -68,7 +72,11 @@ export class Simulation {
   // 次の世代から反映される
   setChaos(chaos) {
     this.P.chaos = chaos;
-    applyChaos(this.pool, chaos);
+    applyChaos(this.pool.rules, chaos);
+    for (const g of this.regions) {
+      if (this.P.regionRules && g.rules) applyChaos(g.rules, chaos);
+      MOTIONS[g.motion].rulesChanged?.(g);
+    }
   }
 
   step() {

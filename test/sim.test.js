@@ -47,9 +47,26 @@ test('途中で chaos を変えても、同じ世代に同じ操作をすれば�
   assert.deepEqual(go().src, go().src);
 });
 
-for (const motion of ['flow', 'ca']) test(`${motion}：同じ seed なら同じ映像`, () => {
-  const P = { seed: 5, K: 7, chaos: 0.2, motion };
-  assert.deepEqual(run(P, 300).src, run(P, 300).src);
+for (const motion of ['flow', 'ca']) for (const ruleMorph of [false, true]) for (const regionRules of [false, true])
+  test(`${motion} A=${ruleMorph} B=${regionRules}：同じ seed なら同じ映像（途中で chaos を変えても）`, () => {
+    const P = { seed: 5, K: 7, chaos: 0.2, motion, ruleMorph, regionRules };
+    const go = () => {
+      const s = new Simulation(P, fakeIO(80, 60));
+      for (let i = 0; i < 400; i++) { if (i === 150) s.setChaos(0.5); if (i === 250) s.setChaos(0.05); s.step(); }
+      return s.src;
+    };
+    assert.deepEqual(go(), go());
+  });
+
+test('A：変形の途中で chaos を変えても、表は「変形前と変形後の chaos 適用済みの表」の混ぜ合わせになっている', () => {
+  const s = new Simulation({ seed: 9, K: 5, chaos: 0.1, ruleMorph: true, regionRules: true, holdMax: 0 }, fakeIO(80, 60));
+  for (let i = 0; i < 60; i++) s.step();
+  s.setChaos(0.6);
+  const g = s.regions.find((g) => g.morph && g.morph.target >= 0 && g.morph.k > 0);
+  assert.ok(g, '変形中の領域がある');
+  const m = g.morph, from = g.rules[g.rk].table, to = g.rules[m.target].table;
+  const done = new Set(m.order.subarray(0, m.k));
+  for (let e = 0; e < g.table.length; e++) assert.equal(g.table[e], done.has(e) ? to[e] : from[e]);
 });
 
 test('flow は止まらずに流れ続ける', () => {

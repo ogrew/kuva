@@ -11,6 +11,9 @@ const CONFIG = {
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 12,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
+  // 実験（見比べ用。変えると最初から作り直し）
+  ruleMorph: true,   // A：ルールを少しずつ変形させる
+  regionRules: true, // B：ルールを領域ごとに、性格にも幅を持たせて作る
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
@@ -37,7 +40,8 @@ function rebuild() {
   const padded = paddedCanvas(bitmap, g);
   const A = Math.max(1, Math.min(ANALYSIS_SUB, cell));
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * A, g.rows * A)), stride: g.cols * A };
-  sim = new Simulation({ seed: CONFIG.seed, K: CONFIG.K, chaos: CONFIG.chaos, motion: CONFIG.motion }, { cols: g.cols, rows: g.rows, Ax: A, Ay: A, analysis });
+  sim = new Simulation({ seed: CONFIG.seed, K: CONFIG.K, chaos: CONFIG.chaos, motion: CONFIG.motion,
+    ruleMorph: CONFIG.ruleMorph, regionRules: CONFIG.regionRules }, { cols: g.cols, rows: g.rows, Ax: A, Ay: A, analysis });
 
   // 写真テクスチャは長辺を上限まで縮小する
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
@@ -109,6 +113,9 @@ gui.add(CONFIG, 'chaos', 0, 1, 0.01).name('chaos (ランダム混入)').onChange
 gui.add(CONFIG, 'gps', 0.5, 60, 0.5).name('世代/秒');
 gui.add(CONFIG, 'fit', { '全体を収める': 'contain', '埋める': 'cover' }).name('縦横比');
 gui.add(actions, 'restart').name('最初から (R)');
+const fx = gui.addFolder('実験');
+fx.add(CONFIG, 'ruleMorph').name('A ルールを少しずつ変形').onChange(rebuild);
+fx.add(CONFIG, 'regionRules').name('B 領域ごとのルール').onChange(rebuild);
 gui.add({ fs: toggleFullscreen }, 'fs').name('フルスクリーン (F)');
 gui.add({ ui: toggleUI }, 'ui').name('GUI を隠す (H)');
 
