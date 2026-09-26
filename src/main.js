@@ -1,5 +1,5 @@
 // main.js — 画像の読み込み、GUI、キー操作、再生ループ
-import GUI from 'lil-gui';
+import { Pane } from 'tweakpane';
 import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
 import { flatColors } from './engine/flat.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
@@ -52,7 +52,6 @@ const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N�
 const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっくりになるだけで、世代の中身は変わらない）
 
 const canvas = document.getElementById('view');
-const info = document.getElementById('info');
 const renderer = new Renderer(canvas);
 
 let bitmap = null, imgName = '';
@@ -107,7 +106,7 @@ async function loadImage(blob, name) {
 // ---------- 再生ループ ----------
 // 映像の中身は世代番号だけで決まる。壁時計は「いつ step するか」にしか使わない
 let lastT = performance.now();
-let rate = { t: lastT, n: 0, value: 0 }; // 実測の世代/秒
+let rate = { t: lastT, n: 0 }; // 実測の世代/秒（0.5秒ごとに stats.rate を更新）
 function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000);
   lastT = t;
@@ -119,101 +118,142 @@ function frame(t) {
     if (n) renderer.setSrc(sim.src);
     rate.n += n;
   }
-  if (t - rate.t >= 1000) { rate.value = (rate.n * 1000) / (t - rate.t); rate.t = t; rate.n = 0; }
+  if (t - rate.t >= 500) { stats.rate = (rate.n * 1000) / (t - rate.t); rate.t = t; rate.n = 0; }
+
   renderer.draw(CONFIG.fit);
   updateInfo();
   requestAnimationFrame(frame);
 }
 
-let lastInfo = '';
+// 「状態」パネルに出す値（モニターが定期的に読む）
 function updateInfo() {
-  let s = status;
+  stats.status = status;
+  stats.play = !sim ? '―' : playing ? '再生中' : '一時停止';
+  stats.gen = sim ? sim.gen : 0;
   if (sim) {
-    s += `   |   ${playing ? '再生中' : '一時停止'}   世代 ${sim.gen}   ${rate.value.toFixed(1)} 世代/秒`;
     const { cw, ch } = renderer.grid;
-    s += `   |   grid ${sim.cols}×${sim.rows}   cell ${cw}×${ch}px   領域 ${sim.regions.length}   seed ${sim.P.seed}`;
-    s += `   |   ${imgName} ${bitmap.width}×${bitmap.height}`;
+    stats.grid = `${sim.cols}×${sim.rows}（cell ${cw}×${ch}px）`;
+    stats.regions = sim.regions.length;
+    stats.seed = sim.P.seed;
+    stats.image = `${imgName} ${bitmap.width}×${bitmap.height}`;
   }
-  if (s !== lastInfo) { info.textContent = s; lastInfo = s; }
 }
 
-// ---------- GUI ----------
-const gui = new GUI({ title: 'kuva' });
-const actions = {
-  play: () => togglePlay(),
-  newSeed: () => { CONFIG.seed = Math.floor(Math.random() * 1e6); cSeed.updateDisplay(); rebuild(); },
-  restart: () => rebuild(),
-};
-const cPlay = gui.add(actions, 'play');
-const cSeed = gui.add(CONFIG, 'seed', 0, 999999, 1).onFinishChange(rebuild);
-gui.add(actions, 'newSeed').name('新しい seed (N)');
-const cCell = gui.add(CONFIG, 'cellSize', CELL_MIN, CELL_MAX, 1).name('cellSize (幅px)');
+// ---------- GUI（Tweakpane v4） ----------
+const pane = new Pane({ title: 'kuva' });
+// コードから CONFIG を書き換えたら guiSync() を呼ぶ。pane.refresh() は change イベントを出すので、その間は処理を止める
+let guiSyncing = false;
+function guiSync() {
+  guiSyncing = true;
+  pane.refresh();
+  guiSyncing = false;
+}
+const num = (f, key, label, min, max, step) => f.addBinding(CONFIG, key, { label, min, max, step });
+const list = (f, key, label, options) => f.addBinding(CONFIG, key, { label, options });
+// 作り直し：スライダーは離したとき（ev.last）だけ。即時：動かしている間も反映する
+const onRebuild = (b, also) => b.on('change', (ev) => { if (guiSyncing) return; also?.(); if (ev.last) rebuild(); });
+const onLive = (b, key, also) => b.on('change', (ev) => { if (guiSyncing) return; if (sim) sim.set(key, ev.value); also?.(); });
+const tip = (b, text) => { b.element.title = text; };
+
+const cPlay = pane.addButton({ title: '一時停止 (Space)' }).on('click', () => togglePlay());
+
+// 状態（読み取り専用のモニター。左下の別パネル）
+const stats = { status: '', play: '―', gen: 0, rate: 0, grid: '―', regions: 0, seed: 0, image: '―' };
+const statPane = new Pane({ title: '状態', container: document.getElementById('stat') });
+const mon = (key, label, opts = {}) => statPane.addBinding(stats, key, { label, readonly: true, ...opts });
+mon('status', 'メッセージ');
+mon('play', '再生');
+mon('gen', '世代', { format: (v) => String(Math.round(v)) });
+mon('rate', '世代/秒（実測）', { format: (v) => v.toFixed(1) });
+mon('rate', '', { view: 'graph', min: 0, max: 60 });
+mon('grid', 'grid');
+mon('regions', '領域', { format: (v) => String(Math.round(v)) });
+mon('seed', 'seed', { format: (v) => String(Math.round(v)) });
+mon('image', '写真');
+
+// 基本
+const f1 = pane.addFolder({ title: '基本' });
+onRebuild(num(f1, 'seed', 'seed', 0, 999999, 1));
+f1.addButton({ title: '新しい seed (N)' }).on('click', () => newSeed());
+const cCell = num(f1, 'cellSize', 'cellSize (幅px)', CELL_MIN, CELL_MAX, 1);
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
-const cAspect = gui.add(CONFIG, 'cellAspect', 0, ASPECTS.length - 1, 1);
-const aspectName = () => { const d = cellDims(); cAspect.name(`高さ比 ×${d.label}（${d.cw}×${d.ch}px）`); };
-cCell.onChange(aspectName).onFinishChange(rebuild);
-cAspect.onChange(aspectName).onFinishChange(rebuild);
+const cAspect = num(f1, 'cellAspect', '', 0, ASPECTS.length - 1, 1);
+const aspectName = () => { const d = cellDims(); cAspect.label = `高さ比 ×${d.label}（${d.cw}×${d.ch}px）`; };
+onRebuild(cCell, aspectName);
+onRebuild(cAspect, aspectName);
 aspectName();
-gui.add(CONFIG, 'K', 2, 12, 1).name('K (色数)').onFinishChange(rebuild);
-gui.add(CONFIG, 'motion', { '流れる': 'flow', 'その場で変化': 'ca' }).name('動き方').onChange(rebuild);
-gui.add(CONFIG, 'direction', { 'ALL': 'all', '下': 'down', '上': 'up', '右': 'right', '左': 'left' }).name('進行方向')
-  .onChange((v) => sim && sim.set('direction', v))
-  .domElement.title = 'ALL：領域ごとに違う向き（E では、ときどき変わる）／それ以外：全領域をその向きに流す';
-const live = (k) => (v) => sim && sim.set(k, v);
-gui.add(CONFIG, 'chaos', 0, 1, 0.01).name('chaos (ランダム混入)').onChange(live('chaos'));
-gui.add(CONFIG, 'gps', 0.5, 60, 0.5).name('世代/秒');
-gui.add(CONFIG, 'fit', { '全体を収める': 'contain', '埋める': 'cover' }).name('縦横比');
-const cFlat = gui.add(CONFIG, 'flatRatio', 0, 1, 0.01).name('塗りつぶし割合');
+onRebuild(num(f1, 'K', 'K (色数)', 2, 12, 1));
+onRebuild(list(f1, 'motion', '動き方', { '流れる': 'flow', 'その場で変化': 'ca' }));
+const cDir = list(f1, 'direction', '進行方向', { 'ALL': 'all', '下': 'down', '上': 'up', '右': 'right', '左': 'left' });
+onLive(cDir, 'direction');
+tip(cDir, 'ALL：領域ごとに違う向き（E では、ときどき変わる）／それ以外：全領域をその向きに流す');
+onLive(num(f1, 'chaos', 'chaos (ランダム混入)', 0, 1, 0.01), 'chaos');
+num(f1, 'gps', '世代/秒', 0.5, 60, 0.5); // 再生ループが毎フレーム読む
+f1.addButton({ title: '最初から (R)' }).on('click', () => rebuild());
+
+// 描画（描画だけに効く。作り直し不要）
+const f2 = pane.addFolder({ title: '描画' });
+list(f2, 'fit', '縦横比', { '全体を収める': 'contain', '埋める': 'cover' });
+const cFlat = num(f2, 'flatRatio', '塗りつぶし割合', 0, 1, 0.01);
 const cFlatSub = [
-  gui.add(CONFIG, 'flatUnit', { 'マスごと': 'tile', '似た色ごと': 'state' }).name('　└ 塗り方'),
-  gui.add(CONFIG, 'flatColor', { '代表色': 'palette', '平均色': 'mean' }).name('　└ 塗りの色'),
+  list(f2, 'flatUnit', '　└ 塗り方', { 'マスごと': 'tile', '似た色ごと': 'state' }),
+  list(f2, 'flatColor', '　└ 塗りの色', { '代表色': 'palette', '平均色': 'mean' }),
 ];
-cFlat.domElement.title = 'CA で運ばれてきたマス（元の位置にない写真タイル）のうち、写真の代わりに一色で塗る割合。0 なら塗らない';
-cFlatSub[0].domElement.title = 'マスごと：写真タイルごとに、塗るかどうかを決める\n似た色ごと：K色に分けたとき同じ色になるタイルを、まとめて塗る';
-cFlatSub[1].domElement.title = '代表色：K色のうち、そのタイルが属する色\n平均色：そのタイル自身の平均の色';
-const refreshFlat = () => cFlatSub.forEach((c) => c.show(CONFIG.flatRatio > 0));
-cFlat.onChange(() => { refreshFlat(); updateFlat(); });
-cFlatSub.forEach((c) => c.onChange(updateFlat));
+tip(cFlat, 'CA で運ばれてきたマス（元の位置にない写真タイル）のうち、写真の代わりに一色で塗る割合。0 なら塗らない');
+tip(cFlatSub[0], 'マスごと：写真タイルごとに、塗るかどうかを決める\n似た色ごと：K色に分けたとき同じ色になるタイルを、まとめて塗る');
+tip(cFlatSub[1], '代表色：K色のうち、そのタイルが属する色\n平均色：そのタイル自身の平均の色');
+const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRatio > 0); });
+[cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));
 refreshFlat();
-gui.add(actions, 'restart').name('最初から (R)');
-const fx = gui.addFolder('実験');
-const cFlavor = fx.add(CONFIG, 'flavor', {
+
+// 実験
+const fx = pane.addFolder({ title: '実験' });
+const cFlavor = list(fx, 'flavor', 'ルールの味付け', {
   'なし（ぱっと切替）': 'none', 'A 少しずつ変形': 'morph', 'B 領域ごとのルール': 'region', 'A＋B': 'morph+region',
-}).name('ルールの味付け');
+});
 const cMorph = [
-  fx.add(CONFIG, 'holdMax', 0, 2000, 10).name('　└ 保持（最大・世代）').onChange(live('holdMax')),
-  fx.add(CONFIG, 'morphMin', 1, 3000, 10).name('　└ 変形（最短・世代）').onChange(live('morphMin')),
-  fx.add(CONFIG, 'morphMax', 1, 3000, 10).name('　└ 変形（最長・世代）').onChange(live('morphMax')),
+  num(fx, 'holdMax', '　└ 保持（最大・世代）', 0, 2000, 10),
+  num(fx, 'morphMin', '　└ 変形（最短・世代）', 1, 3000, 10),
+  num(fx, 'morphMax', '　└ 変形（最長・世代）', 1, 3000, 10),
 ];
-const cInject = fx.add(CONFIG, 'inject').name('C 上流から写真を流し込む');
-const cPeriod = fx.add(CONFIG, 'injectPeriod', 20, 600, 10).name('　└ 周期（世代）').onChange(live('injectPeriod'));
-const cTempo = fx.add(CONFIG, 'tempo').name('E 領域ごとのテンポ');
-cTempo.domElement.title = '領域ごとに進む速さが違います。100〜500世代ごとに速さが変わり、ときどき流れる向きも変わります';
-const cTempoRange = ['tempoFast', 'tempoSlow'].map((k) => fx.add(CONFIG, k, 0, TEMPOS.length - 1, 1));
+cMorph.forEach((c) => onLive(c, c.key));
+const cInject = fx.addBinding(CONFIG, 'inject', { label: 'C 上流から写真を流し込む' });
+tip(cInject, '「流れる」のときだけ効きます。領域ごとに時期をずらして、周期ごとに写真を上流から流し込みます');
+const cPeriod = num(fx, 'injectPeriod', '　└ 周期（世代）', 20, 600, 10);
+onLive(cPeriod, 'injectPeriod');
+const cTempo = fx.addBinding(CONFIG, 'tempo', { label: 'E 領域ごとのテンポ' });
+tip(cTempo, '領域ごとに進む速さが違います。100〜500世代ごとに速さが変わり、ときどき流れる向きも変わります');
+const cTempoRange = ['tempoFast', 'tempoSlow'].map((k) => num(fx, k, '', 0, TEMPOS.length - 1, 1));
 const tempoName = () => {
-  cTempoRange[0].name(`　└ 最速 ${TEMPO_LABELS[CONFIG.tempoFast]}`);
-  cTempoRange[1].name(`　└ 最遅 ${TEMPO_LABELS[CONFIG.tempoSlow]}`);
+  cTempoRange[0].label = `　└ 最速 ${TEMPO_LABELS[CONFIG.tempoFast]}`;
+  cTempoRange[1].label = `　└ 最遅 ${TEMPO_LABELS[CONFIG.tempoSlow]}`;
 };
-cTempoRange.forEach((c) => c.onChange((v) => { live(c.property)(v); tempoName(); }));
+cTempoRange.forEach((c) => onLive(c, c.key, tempoName));
 tempoName();
-cInject.domElement.title = '「流れる」のときだけ効きます。領域ごとに時期をずらして、周期ごとに写真を上流から流し込みます';
 const refreshFx = () => {
-  cMorph.forEach((c) => c.show(FLAVORS[CONFIG.flavor].ruleMorph));
-  cPeriod.show(CONFIG.inject);
-  cTempoRange.forEach((c) => c.show(CONFIG.tempo));
+  cMorph.forEach((c) => { c.hidden = !FLAVORS[CONFIG.flavor].ruleMorph; });
+  cPeriod.hidden = !CONFIG.inject;
+  cTempoRange.forEach((c) => { c.hidden = !CONFIG.tempo; });
 };
-cFlavor.onChange(() => { refreshFx(); rebuild(); });
-cInject.onChange((v) => { live('inject')(v); refreshFx(); });
-cTempo.onChange((v) => { live('tempo')(v); refreshFx(); });
+onRebuild(cFlavor, refreshFx);
+onLive(cInject, 'inject', refreshFx);
+onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
-gui.add({ fs: toggleFullscreen }, 'fs').name('フルスクリーン (F)');
-gui.add({ ui: toggleUI }, 'ui').name('GUI を隠す (H)');
+
+pane.addBlade({ view: 'separator' });
+pane.addButton({ title: 'フルスクリーン (F)' }).on('click', () => toggleFullscreen());
+pane.addButton({ title: 'GUI を隠す (H)' }).on('click', () => toggleUI());
+
+function newSeed() {
+  CONFIG.seed = Math.floor(Math.random() * 1e6);
+  guiSync();
+  rebuild();
+}
 
 function togglePlay() {
   playing = !playing;
-  cPlay.name(playing ? '一時停止 (Space)' : '再生 (Space)');
+  cPlay.title = playing ? '一時停止 (Space)' : '再生 (Space)';
 }
-cPlay.name('一時停止 (Space)');
 
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
@@ -222,21 +262,25 @@ function toggleFullscreen() {
 
 function toggleUI() {
   uiVisible = !uiVisible;
-  gui.show(uiVisible);
-  info.hidden = !uiVisible;
+  pane.hidden = !uiVisible;
+  statPane.hidden = !uiVisible;
   document.body.classList.toggle('bare', !uiVisible);
 }
 
 // ---------- キー操作 ----------
 window.addEventListener('keydown', (e) => {
-  const tag = document.activeElement && document.activeElement.tagName;
-  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  const el = document.activeElement, tag = el && el.tagName;
+  // 文字を入力する欄だけは、キー操作を奪わない（チェックボックスを触ったあとでも H や Space は効くように）
+  if ((tag === 'INPUT' && el.type !== 'checkbox') || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if (tag === 'INPUT') el.blur();
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // GUI のボタンにフォーカスが残っていると、Space でそのボタンも押されてしまうので外す
+  if (tag === 'BUTTON') document.activeElement.blur();
   const k = e.key.toLowerCase();
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   else if (k === 'f') toggleFullscreen();
   else if (k === 'h') toggleUI();
-  else if (k === 'n') actions.newSeed();
+  else if (k === 'n') newSeed();
   else if (k === 'r') rebuild();
 });
 

@@ -6,17 +6,16 @@
   <style>
     html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
     #view { display: block; width: 100vw; height: 100vh; }
-    #info {
-      position: fixed; left: 16px; bottom: 12px; right: 16px;
-      font: 13px/1.4 Helvetica, Arial, sans-serif; color: #e6e6e6;
-      text-shadow: 0 0 3px #000, 0 0 6px #000; pointer-events: none; white-space: nowrap; overflow: hidden;
-    }
+    /* 「状態」パネル（左下） */
+    #stat { position: fixed; left: 8px; bottom: 8px; width: 320px; }
     body.bare { cursor: none; }
+    /* Tweakpane：日本語の長いラベルが切れないよう幅を広げ、画面より高いときはスクロールさせる。Tweakpane が後から入れる CSS に負けないよう html を付けている（kivi と同じ） */
+    html .tp-dfwv { width: 360px; max-height: calc(100vh - 16px); overflow-y: auto; }
   </style>
 </head>
 <body>
   <canvas id="view"></canvas>
-  <div id="info"></div>
+  <div id="stat"></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

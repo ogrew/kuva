@@ -13,10 +13,10 @@
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {
-    "lil-gui": "^0.21.0"
-  },
   "devDependencies": {
     "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "tweakpane": "^4.0.5"
   }
 }
