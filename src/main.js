@@ -250,10 +250,22 @@ function newSeed() {
   rebuild();
 }
 
-function togglePlay() {
-  playing = !playing;
+function togglePlay() { setPlaying(!playing); }
+const AUTO_PAUSED = 'タブが非アクティブになったので一時停止しました';
+function setPlaying(v) {
+  playing = v;
+  if (playing && status === AUTO_PAUSED) status = '';
   cPlay.title = playing ? '一時停止 (Space)' : '再生 (Space)';
 }
+
+// タブが見えなくなったら（タブの切り替え・最小化など）一時停止する。見えるようになっても自動では再開しない。
+// ウィンドウのフォーカスが外れただけ（blur）では止めない：2画面目に映しながら別のアプリを触ることがあるため
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && playing) {
+    setPlaying(false);
+    status = AUTO_PAUSED;
+  }
+});
 
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
