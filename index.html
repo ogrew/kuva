@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>kuva</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #view { display: block; width: 100vw; height: 100vh; }
+    #info {
+      position: fixed; left: 16px; bottom: 12px; right: 16px;
+      font: 13px/1.4 Helvetica, Arial, sans-serif; color: #e6e6e6;
+      text-shadow: 0 0 3px #000, 0 0 6px #000; pointer-events: none; white-space: nowrap; overflow: hidden;
+    }
+    body.bare { cursor: none; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="info"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "kuva",
+  "private": true,
+  "type": "module",
+  "description": "写真1枚を多状態1次元セルオートマトンでリアルタイムに崩し続ける映像ツール",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "lil-gui": "^0.21.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.1"
+  }
+}

@@ -1,0 +1,143 @@
+// renderer.js — WebGL2 描画
+// テクスチャは2枚：
+//   写真：パディング済みグリッド全体の画像
+//   src ：cols×rows の R32I。セルごとに「描く写真タイルの番号」（毎世代更新）
+// フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
+
+const VS = `#version 300 es
+void main() {
+  // 画面全体を覆う三角形1枚
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+const FS = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp isampler2D;
+uniform sampler2D uPhoto;
+uniform isampler2D uSrc;
+uniform int uCols;
+uniform vec2 uGrid;     // (cols, rows)
+uniform vec2 uTexSize;  // 写真テクスチャの寸法
+uniform float uCanvasH;
+uniform vec2 uOff;      // キャンバス座標(px) → グリッド座標(セル) の変換：g = uOff + p * uScale
+uniform float uScale;
+uniform vec2 uImgMin;   // 元写真の範囲（グリッド座標）。外側は余白
+uniform vec2 uImgMax;
+out vec4 outColor;
+
+void main() {
+  vec2 p = vec2(gl_FragCoord.x, uCanvasH - gl_FragCoord.y);
+  vec2 g = uOff + p * uScale;
+  if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
+  int s = texelFetch(uSrc, c, 0).r;
+  vec2 sc = vec2(float(s % uCols), float(s / uCols));
+  // マス内の位置。隣のマスがにじまないよう、マスの内側半テクセルにクランプする
+  vec2 texCell = uTexSize / uGrid;
+  vec2 local = clamp(fract(g) * texCell, vec2(0.5), texCell - 0.5);
+  vec2 uv = (sc * texCell + local) / uTexSize;
+  // ミップマップの段は、マス境界で飛ばない連続な座標から決める（境界に線が出ないように）
+  outColor = vec4(textureGrad(uPhoto, uv, dFdx(g) / uGrid, dFdy(g) / uGrid).rgb, 1.0);
+}`;
+
+export class Renderer {
+  constructor(canvas) {
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+    if (!gl) throw new Error('WebGL2 が使えません');
+    this.gl = gl; this.canvas = canvas;
+    this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const sh = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    this.prog = prog;
+    this.u = {};
+    for (const n of ['uPhoto', 'uSrc', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    this.vao = gl.createVertexArray();
+    this.photoTex = null; this.srcTex = null; this.grid = null;
+  }
+
+  // 写真テクスチャの長辺の上限
+  get maxPhotoSize() { return Math.min(4096, this.maxTex); }
+
+  /** layout = gridLayout の結果、photo = パディング済みグリッド全体のキャンバス（縮小済みでもよい） */
+  setPhoto(layout, photo) {
+    const gl = this.gl;
+    if (this.photoTex) gl.deleteTexture(this.photoTex);
+    if (this.srcTex) gl.deleteTexture(this.srcTex);
+    this.grid = layout;
+    this.texSize = [photo.width, photo.height];
+
+    this.photoTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.photoTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, photo);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    this.srcTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32I, layout.cols, layout.rows);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  }
+
+  setSrc(src) {
+    const gl = this.gl, { cols, rows } = this.grid;
+    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.INT, src);
+  }
+
+  // キャンバスの画素数を表示サイズ × devicePixelRatio に合わせる
+  resize() {
+    const c = this.canvas, d = window.devicePixelRatio || 1;
+    const w = Math.round(c.clientWidth * d), h = Math.round(c.clientHeight * d);
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  }
+
+  /** fit = 'contain'（全体を収める・余白） | 'cover'（埋める・切り取り） */
+  draw(fit) {
+    const gl = this.gl, c = this.canvas;
+    this.resize();
+    gl.viewport(0, 0, c.width, c.height);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (!this.grid) return;
+    const { cols, rows, ox, oy, W, H, cell } = this.grid;
+    // 写真 1px をキャンバス何 px で描くか
+    const s = (fit === 'cover' ? Math.max : Math.min)(c.width / W, c.height / H);
+    const dx = (c.width - W * s) / 2, dy = (c.height - H * s) / 2;
+    const scale = 1 / (s * cell); // キャンバス 1px = グリッド何セルか
+    const min = [ox / cell, oy / cell];
+
+    gl.useProgram(this.prog);
+    gl.bindVertexArray(this.vao);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photoTex);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    const u = this.u;
+    gl.uniform1i(u.uPhoto, 0);
+    gl.uniform1i(u.uSrc, 1);
+    gl.uniform1i(u.uCols, cols);
+    gl.uniform2f(u.uGrid, cols, rows);
+    gl.uniform2f(u.uTexSize, this.texSize[0], this.texSize[1]);
+    gl.uniform1f(u.uCanvasH, c.height);
+    gl.uniform2f(u.uOff, min[0] - dx * scale, min[1] - dy * scale);
+    gl.uniform1f(u.uScale, scale);
+    gl.uniform2f(u.uImgMin, min[0], min[1]);
+    gl.uniform2f(u.uImgMax, min[0] + W / cell, min[1] + H / cell);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+}
