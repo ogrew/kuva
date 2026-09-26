@@ -138,9 +138,12 @@ function stepLines(g, sim, prev, next, flow) {
  */
 function injectRow(g, sim, lineCount) {
   const P = sim.P;
-  if (!P.inject) { g.inj = -1; return -1; }
+  if (!P.inject) { g.inj = -1; g.injEpoch = undefined; return -1; }
   const period = Math.max(1, Math.round(P.injectPeriod));
-  if ((sim.gen + g.injPhase) % period === 0) g.inj = 0;
+  // 周期の区切りをまたいだら始める（テンポ E で進まない世代があっても取りこぼさないように）
+  const epoch = Math.floor((sim.gen + g.injPhase) / period);
+  if (g.injEpoch === undefined) g.injEpoch = Math.floor((sim.gen + g.injPhase - 1) / period);
+  if (epoch !== g.injEpoch) { g.injEpoch = epoch; g.inj = 0; }
   if (!(g.inj >= 0 && g.inj < lineCount)) { g.inj = -1; return -1; }
   return lineCount - 1 - g.inj++;
 }

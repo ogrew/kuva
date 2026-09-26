@@ -1,6 +1,6 @@
 // main.js — 画像の読み込み、GUI、キー操作、再生ループ
 import GUI from 'lil-gui';
-import { Simulation } from './engine/sim.js';
+import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
 import { Renderer } from './render/renderer.js';
 
@@ -17,7 +17,10 @@ const CONFIG = {
   morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
   morphMax: 500,          // A：〃 最長（即時反映）
   inject: false,          // C：上流から写真を流し込む（即時反映。流れるのときだけ効く）
-  injectPeriod: 600,      // C：流し込みの周期（世代）（即時反映）
+  injectPeriod: 200,      // C：流し込みの周期（世代）（即時反映）
+  tempo: false,           // E：領域ごとのテンポ（即時反映）
+  tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
+  tempoSlow: 4,           // E：〃 最遅
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
 // ルールの味付け → エンジンの設定
@@ -137,13 +140,24 @@ const cMorph = [
 ];
 const cInject = fx.add(CONFIG, 'inject').name('C 上流から写真を流し込む');
 const cPeriod = fx.add(CONFIG, 'injectPeriod', 20, 600, 10).name('　└ 周期（世代）').onChange(live('injectPeriod'));
+const cTempo = fx.add(CONFIG, 'tempo').name('E 領域ごとのテンポ');
+cTempo.domElement.title = '領域ごとに進む速さが違います。100〜500世代ごとに速さが変わり、ときどき流れる向きも変わります';
+const cTempoRange = ['tempoFast', 'tempoSlow'].map((k) => fx.add(CONFIG, k, 0, TEMPOS.length - 1, 1));
+const tempoName = () => {
+  cTempoRange[0].name(`　└ 最速 ${TEMPO_LABELS[CONFIG.tempoFast]}`);
+  cTempoRange[1].name(`　└ 最遅 ${TEMPO_LABELS[CONFIG.tempoSlow]}`);
+};
+cTempoRange.forEach((c) => c.onChange((v) => { live(c.property)(v); tempoName(); }));
+tempoName();
 cInject.domElement.title = '「流れる」のときだけ効きます。領域ごとに時期をずらして、周期ごとに写真を上流から流し込みます';
 const refreshFx = () => {
   cMorph.forEach((c) => c.show(FLAVORS[CONFIG.flavor].ruleMorph));
   cPeriod.show(CONFIG.inject);
+  cTempoRange.forEach((c) => c.show(CONFIG.tempo));
 };
 cFlavor.onChange(() => { refreshFx(); rebuild(); });
 cInject.onChange((v) => { live('inject')(v); refreshFx(); });
+cTempo.onChange((v) => { live('tempo')(v); refreshFx(); });
 refreshFx();
 gui.add({ fs: toggleFullscreen }, 'fs').name('フルスクリーン (F)');
 gui.add({ ui: toggleUI }, 'ui').name('GUI を隠す (H)');

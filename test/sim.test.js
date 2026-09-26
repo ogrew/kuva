@@ -130,3 +130,43 @@ test('再生中に変えられないパラメータは set で弾く', () => {
   const s = new Simulation({ seed: 1, K: 4, chaos: 0.1 }, fakeIO(40, 30));
   assert.throws(() => s.set('K', 5));
 });
+
+test('E：テンポを途中で ON/OFF しても決定的。×1/2 以下の領域は進まない世代がある', () => {
+  const P = { seed: 13, K: 6, chaos: 0.2, motion: 'flow', inject: true, injectPeriod: 50 };
+  const go = () => {
+    const s = new Simulation(P, fakeIO(80, 60));
+    for (let i = 0; i < 700; i++) { if (i === 100) s.set('tempo', true); if (i === 600) s.set('tempo', false); s.step(); }
+    return s.src;
+  };
+  assert.deepEqual(go(), go());
+  const s = new Simulation({ ...P, tempo: true }, fakeIO(80, 60));
+  for (let i = 0; i < 50; i++) s.step();
+  const g = s.regions.find((g) => g.motion === 'flow' && g.level >= 2);
+  assert.ok(g, '×1/2 以下の領域がある');
+  let same = 0;
+  for (let i = 0; i < 40; i++) { const before = s.cur.src.slice(); s.step(); if (s.src.every((v, k) => v === before[k] || !inRegion(g, k, s.cols))) same++; }
+  assert.ok(same > 0, '領域が止まっている世代がある');
+});
+const inRegion = (g, k, cols) => { const x = k % cols, y = Math.floor(k / cols); return x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h; };
+
+
+test('E：テンポの範囲を途中で変えても決定的で、範囲外の領域はすぐ範囲内に寄る', () => {
+  const P = { seed: 17, K: 6, chaos: 0.2, motion: 'flow', tempo: true, tempoFast: 0, tempoSlow: 5 };
+  const go = () => {
+    const s = new Simulation(P, fakeIO(80, 60));
+    for (let i = 0; i < 600; i++) { if (i === 200) s.set('tempoSlow', 2); if (i === 400) s.set('tempoFast', 0); s.step(); }
+    return s;
+  };
+  const a = go();
+  assert.deepEqual(a.src, go().src);
+  for (const g of a.regions) if (g.level !== undefined && g.motion !== 'still') assert.ok(g.level >= 0 && g.level <= 2);
+});
+
+test('E：×2 の領域は、×1 で2世代進めたのと同じになる', () => {
+  // テンポ以外の条件を同じにするため、E ON で全領域 ×2（範囲 0〜0）と、E OFF を比べる
+  const P = { seed: 8, K: 6, chaos: 0.2, motion: 'flow', tempoHoldMin: 100000, tempoHoldMax: 100001 };
+  const a = new Simulation({ ...P, tempo: true, tempoFast: 0, tempoSlow: 0 }, fakeIO(80, 60));
+  const b = new Simulation({ ...P, tempo: false }, fakeIO(80, 60));
+  for (let i = 0; i < 50; i++) { a.step(); b.step(); b.step(); }
+  assert.deepEqual(a.src, b.src);
+});

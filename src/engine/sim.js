@@ -9,6 +9,10 @@ import { MOTIONS } from './motions.js';
 // 生成ロジックを変えたら上げる
 export const ENGINE_VERSION = 1;
 
+// E のテンポの段階：1世代あたりに進む回数。1 より大きいと1世代に複数回、1 未満なら 1/n 世代に1回
+export const TEMPOS = [2, 1, 1 / 2, 1 / 3, 1 / 4, 1 / 5];
+export const TEMPO_LABELS = ['×2', '×1', '×1/2', '×1/3', '×1/4', '×1/5'];
+
 // GUI に出さない内部値
 export const ENGINE_DEFAULTS = {
   // 解析
@@ -27,7 +31,12 @@ export const ENGINE_DEFAULTS = {
   holdMax: 200,        // 変形が終わってから次の変形までの最大世代数
   regionRules: true,   // 実験 B：ルールを領域ごとに作り、性格（GENRES）と写真へ戻る割合も抽選する
   inject: false,       // 実験 C：flow で、上流から写真を流し込む
-  injectPeriod: 600,   // 流し込みの周期（世代）
+  injectPeriod: 200,   // 流し込みの周期（世代）
+  tempo: false,        // 実験 E：領域ごとのテンポ（何世代に1回進むか）。ときどき変わり、流れる向きも変わる
+  tempoFast: 1,        // テンポの範囲（TEMPOS の番号）。最速
+  tempoSlow: 4,        // 〃 最遅
+  tempoHoldMin: 100, tempoHoldMax: 500, // テンポを引き直す間隔（世代）
+  dirChangeProb: 0.3,  // テンポを引き直すとき、流れる向きも変える確率
   // 領域
   maxDepth: 7,
   minDepth: 2,
@@ -60,6 +69,10 @@ export class Simulation {
       const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
       g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
       MOTIONS[g.motion].init(g, this);
+      // E のテンポ用の乱数は別系列（E を切り替えても、他の乱数の流れは変わらない）
+      g.trng = mulberry32(hash(P.seed, r, 0x74656D70));
+      g.tempoPhase = Math.floor(g.trng() * 12);
+      this.retime(g, false);
       return g;
     });
 
@@ -82,15 +95,48 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'chaos') this.setChaos(value);
     else this.P[key] = value;
+    if (key === 'tempoFast' || key === 'tempoSlow') {
+      // 範囲の外にいる領域は、すぐ範囲内に寄せる
+      const [lo, hi] = this.tempoRange();
+      for (const g of this.regions) g.level = Math.min(hi, Math.max(lo, g.level));
+    }
+  }
+
+  // E：テンポを引き直す（乱数は毎回4つずつ消費する）
+  retime(g, turn = true) {
+    const P = this.P, r = g.trng;
+    const [lo, hi] = this.tempoRange();
+    g.level = lo + Math.floor(r() * (hi - lo + 1));
+    const u = r(), d = Math.floor(r() * 4);
+    if (turn && g.dir !== undefined && u < P.dirChangeProb && d !== g.dir) { g.dir = d; g.inj = -1; }
+    g.tempoLeft = P.tempoHoldMin + Math.floor(r() * (P.tempoHoldMax - P.tempoHoldMin));
+  }
+
+  tempoRange() {
+    const n = TEMPOS.length - 1, a = Math.round(this.P.tempoFast), b = Math.round(this.P.tempoSlow);
+    return [Math.max(0, Math.min(n, Math.min(a, b))), Math.max(0, Math.min(n, Math.max(a, b)))];
   }
 
   step() {
-    for (const g of this.regions) MOTIONS[g.motion].step(g, this, this.cur, this.nxt);
+    for (const g of this.regions) {
+      const m = MOTIONS[g.motion];
+      if (!this.P.tempo || g.motion === 'still') { m.step(g, this, this.cur, this.nxt); continue; }
+      if (--g.tempoLeft <= 0) this.retime(g);
+      const rate = TEMPOS[g.level];
+      if (rate >= 1) {
+        // 1世代に rate 回進む。領域は自分のセルしか読まないので、途中の結果を cur に書き戻して続けてよい
+        for (let k = 0; k < rate; k++) {
+          if (k > 0) MOTIONS.still.step(g, this, this.nxt, this.cur);
+          m.step(g, this, this.cur, this.nxt);
+        }
+      } else if ((this.gen + g.tempoPhase) % Math.round(1 / rate) === 0) m.step(g, this, this.cur, this.nxt);
+      else MOTIONS.still.step(g, this, this.cur, this.nxt); // この世代は進まない：前の世代のまま
+    }
     const t = this.cur; this.cur = this.nxt; this.nxt = t;
     this.gen++;
   }
