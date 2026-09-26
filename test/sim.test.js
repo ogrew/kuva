@@ -86,3 +86,47 @@ test('しばらく回しても一色やノイズに振り切れない（ざっ�
   assert.ok(Math.max(...hist) < N * 0.9, '一色に収束していない');
   assert.ok(own > N * 0.05 && own < N * 0.98, `元の位置のタイルの割合 ${(own / N).toFixed(2)}`);
 });
+
+test('C：流し込みを周期ごとに始め、途中で周期を変えても決定的', () => {
+  const P = { seed: 21, K: 6, chaos: 0.2, motion: 'flow', inject: true, injectPeriod: 90 };
+  const go = () => {
+    const s = new Simulation(P, fakeIO(80, 60));
+    let started = 0;
+    for (let i = 0; i < 500; i++) {
+      if (i === 250) s.set('injectPeriod', 40);
+      if (i === 400) s.set('inject', false);
+      s.step();
+      started += s.regions.filter((g) => g.inj === 1).length;
+    }
+    return { src: s.src, started };
+  };
+  const a = go(), b = go();
+  assert.ok(a.started > 0, '流し込みが始まっている');
+  assert.deepEqual(a.src, b.src);
+});
+
+test('C：領域の長さぶん流し込むと、写真がちょうど元の位置に並ぶ', () => {
+  const s = new Simulation({ seed: 3, K: 5, chaos: 0.5, motion: 'flow', skipProb: 0, inject: true, injectPeriod: 100000 }, fakeIO(60, 40));
+  // 流し込みの時期を全領域そろえて、世代 0 から始める
+  for (const g of s.regions) g.injPhase = 0;
+  const len = (g) => (g.dir < 2 ? g.h : g.w);
+  const longest = Math.max(...s.regions.map(len));
+  let checked = 0;
+  for (let n = 1; n <= longest; n++) {
+    s.step();
+    for (const g of s.regions) {
+      if (len(g) !== n) continue;
+      checked++;
+      for (let yy = g.y; yy < g.y + g.h; yy++) for (let xx = g.x; xx < g.x + g.w; xx++) {
+        const c = yy * s.cols + xx;
+        assert.equal(s.src[c], c, `領域 ${g.index}（向き ${g.dir}）`);
+      }
+    }
+  }
+  assert.equal(checked, s.regions.length);
+});
+
+test('再生中に変えられないパラメータは set で弾く', () => {
+  const s = new Simulation({ seed: 1, K: 4, chaos: 0.1 }, fakeIO(40, 30));
+  assert.throws(() => s.set('K', 5));
+});

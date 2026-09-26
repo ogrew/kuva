@@ -26,6 +26,8 @@ export const ENGINE_DEFAULTS = {
   morphMin: 150, morphMax: 500, // 変形にかける世代数
   holdMax: 200,        // 変形が終わってから次の変形までの最大世代数
   regionRules: true,   // 実験 B：ルールを領域ごとに作り、性格（GENRES）と写真へ戻る割合も抽選する
+  inject: false,       // 実験 C：flow で、上流から写真を流し込む
+  injectPeriod: 600,   // 流し込みの周期（世代）
   // 領域
   maxDepth: 7,
   minDepth: 2,
@@ -55,7 +57,7 @@ export class Simulation {
 
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
     this.regions = subdivide(P, cols, rows, rng).map(([x, y, w, h], r) => {
-      const g = { x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
+      const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
       g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
       MOTIONS[g.motion].init(g, this);
       return g;
@@ -77,6 +79,14 @@ export class Simulation {
       if (this.P.regionRules && g.rules) applyChaos(g.rules, chaos);
       MOTIONS[g.motion].rulesChanged?.(g);
     }
+  }
+
+  // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod'];
+  set(key, value) {
+    if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
+    if (key === 'chaos') this.setChaos(value);
+    else this.P[key] = value;
   }
 
   step() {

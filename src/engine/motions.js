@@ -41,6 +41,8 @@ function initLines(g, sim) {
   g.cooldown = 0;
   g.hist = new Int32Array(K);
   g.table = g.rules[0].table;
+  g.inj = -1; // 写真の流し込みの進み具合（-1 = 流し込み中でない）
+  g.injPhase = hash(P.seed, g.index, 0x696E6A) % 1000003; // 流し込みの時期のずれ（乱数を消費しない）
   if (P.ruleMorph) {
     // A：ルール表の項目を、この順番で少しずつ次のルールの値に置き換えていく
     const E = pool.E, order = Int32Array.from({ length: E }, (_, i) => i);
@@ -81,20 +83,41 @@ function stepLines(g, sim, prev, next, flow) {
   const ps = prev.state, pr = prev.src, ns = next.state, nr = next.src;
   const hist = g.hist;
   hist.fill(0);
+  const inj = flow ? injectRow(g, sim, lineCount) : -1;
+  // 流し込み中は、写真が入ってきた部分（先頭から j 行）をルールをかけずにそのまま運ぶ。
+  // 1マス流れるたびにルールをかけると、写真の帯が先頭から数マスで崩れて見えなくなるため
+  const j = inj >= 0 ? lineCount - 1 - inj : -1;
 
   for (let t = 0; t < lineCount; t++) {
-    // 前の世代のどの行を見るか（自分からの差）
-    const up = !flow ? 0 : t > 0 ? dt : -(lineCount - 1) * dt;
+    // 前の世代のどの行を見るか（自分からの差）。flow の先頭の行は末尾の行（循環）、
+    // 写真の流し込み中は元写真の行 inj を読む
+    const photo = t === 0 && inj >= 0;
+    const up = !flow ? 0 : t > 0 ? dt : -(photo ? inj : lineCount - 1) * dt;
+    const raw = t <= j;
     for (let i = 0, c = start + t * dt; i < lineLen; i++, c += di) {
       const u = c - up;
-      let L, sL, R, sR;
-      if (i > 0) { L = ps[u - di]; sL = pr[u - di]; } else { L = g.bVal; sL = g.bSrc; }
-      if (i < lineLen - 1) { R = ps[u + di]; sR = pr[u + di]; } else { R = g.bVal; sR = g.bSrc; }
-      const C = ps[u], I = cls[c];
+      if (raw) {
+        const o = photo ? cls[u] : ps[u];
+        ns[c] = o; nr[c] = photo ? u : pr[u];
+        hist[o]++;
+        continue;
+      }
+      let L, sL, C, sC, R, sR;
+      if (photo) {
+        // 元写真（状態 = cls、タイル = 自分自身）
+        C = cls[u]; sC = u;
+        if (i > 0) { L = cls[u - di]; sL = u - di; } else { L = g.bVal; sL = g.bSrc; }
+        if (i < lineLen - 1) { R = cls[u + di]; sR = u + di; } else { R = g.bVal; sR = g.bSrc; }
+      } else {
+        C = ps[u]; sC = pr[u];
+        if (i > 0) { L = ps[u - di]; sL = pr[u - di]; } else { L = g.bVal; sL = g.bSrc; }
+        if (i < lineLen - 1) { R = ps[u + di]; sR = pr[u + di]; } else { R = g.bVal; sR = g.bSrc; }
+      }
+      const I = cls[c];
       const o = rule[((L * K + C) * K + R) * K + I];
       // 写真タイルの出どころを伝播させる → 「同じマス目が繰り返される」
       let s;
-      if (o === C) s = pr[u];        // 前の世代のタイルを引き継ぐ（flow なら上流から流れてくる）
+      if (o === C) s = sC;           // 前の世代のタイルを引き継ぐ（flow なら上流から流れてくる）
       else if (o === I) s = c;       // 本来その場所にある写真
       else if (o === L) s = sL;
       else if (o === R) s = sR;
@@ -105,6 +128,21 @@ function stepLines(g, sim, prev, next, flow) {
   }
   if (g.morph) morphRule(g, sim, lineLen * lineCount);
   else switchRule(g, sim, lineLen * lineCount);
+}
+
+/**
+ * C：上流から写真を流し込む。period 世代ごと（領域ごとに時期をずらす）に始まり、lineCount 世代続く。
+ * 流し込みの j 世代目は、元写真の行 lineCount-1-j を先頭の行へ入れる
+ * → 写真の末尾の行から順に滑り込み、流し込み終わると写真がちょうど元の位置に並ぶ。そこからまた崩れ始める。
+ * 戻り値：この世代に先頭へ入れる元写真の行（流し込み中でなければ -1）。乱数は使わない
+ */
+function injectRow(g, sim, lineCount) {
+  const P = sim.P;
+  if (!P.inject) { g.inj = -1; return -1; }
+  const period = Math.max(1, Math.round(P.injectPeriod));
+  if ((sim.gen + g.injPhase) % period === 0) g.inj = 0;
+  if (!(g.inj >= 0 && g.inj < lineCount)) { g.inj = -1; return -1; }
+  return lineCount - 1 - g.inj++;
 }
 
 // 領域のエントロピー（0〜1。0 = 一色）
@@ -136,7 +174,8 @@ function morphRule(g, sim, n) {
   if (m.target < 0) {
     if (m.hold > 0 && entropy(g, K, n) >= P.entropySwitch) { m.hold--; return; }
     m.target = (g.rk + 1 + Math.floor(v * (g.rules.length - 1))) % g.rules.length;
-    m.len = Math.round(P.morphMin + u * (P.morphMax - P.morphMin));
+    const lo = Math.min(P.morphMin, P.morphMax), hi = Math.max(P.morphMin, P.morphMax);
+    m.len = Math.max(1, Math.round(lo + u * (hi - lo)));
     m.t = 0; m.k = 0;
     return;
   }

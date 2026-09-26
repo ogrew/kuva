@@ -11,10 +11,21 @@ const CONFIG = {
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 12,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
-  // 実験（見比べ用。変えると最初から作り直し）
-  ruleMorph: true,   // A：ルールを少しずつ変形させる
-  regionRules: true, // B：ルールを領域ごとに、性格にも幅を持たせて作る
+  // ---- 実験（見比べ用）----
+  flavor: 'morph+region', // ルールの味付け（FLAVORS）。変えると最初から作り直し
+  holdMax: 200,           // A：変形が終わってから次の変形までの最大世代数（即時反映）
+  morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
+  morphMax: 500,          // A：〃 最長（即時反映）
+  inject: false,          // C：上流から写真を流し込む（即時反映。流れるのときだけ効く）
+  injectPeriod: 600,      // C：流し込みの周期（世代）（即時反映）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
+};
+// ルールの味付け → エンジンの設定
+const FLAVORS = {
+  'none':         { ruleMorph: false, regionRules: false },
+  'morph':        { ruleMorph: true,  regionRules: false },
+  'region':       { ruleMorph: false, regionRules: true },
+  'morph+region': { ruleMorph: true,  regionRules: true },
 };
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
 const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっくりになるだけで、世代の中身は変わらない）
@@ -40,8 +51,9 @@ function rebuild() {
   const padded = paddedCanvas(bitmap, g);
   const A = Math.max(1, Math.min(ANALYSIS_SUB, cell));
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * A, g.rows * A)), stride: g.cols * A };
-  sim = new Simulation({ seed: CONFIG.seed, K: CONFIG.K, chaos: CONFIG.chaos, motion: CONFIG.motion,
-    ruleMorph: CONFIG.ruleMorph, regionRules: CONFIG.regionRules }, { cols: g.cols, rows: g.rows, Ax: A, Ay: A, analysis });
+  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, ...FLAVORS[CONFIG.flavor] };
+  for (const k of Simulation.LIVE) P[k] = CONFIG[k];
+  sim = new Simulation(P, { cols: g.cols, rows: g.rows, Ax: A, Ay: A, analysis });
 
   // 写真テクスチャは長辺を上限まで縮小する
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
@@ -109,13 +121,30 @@ gui.add(actions, 'newSeed').name('新しい seed (N)');
 gui.add(CONFIG, 'cellSize', 4, 256, 1).name('cellSize (px)').onFinishChange(rebuild);
 gui.add(CONFIG, 'K', 2, 12, 1).name('K (色数)').onFinishChange(rebuild);
 gui.add(CONFIG, 'motion', { '流れる': 'flow', 'その場で変化': 'ca' }).name('動き方').onChange(rebuild);
-gui.add(CONFIG, 'chaos', 0, 1, 0.01).name('chaos (ランダム混入)').onChange((v) => sim && sim.setChaos(v));
+const live = (k) => (v) => sim && sim.set(k, v);
+gui.add(CONFIG, 'chaos', 0, 1, 0.01).name('chaos (ランダム混入)').onChange(live('chaos'));
 gui.add(CONFIG, 'gps', 0.5, 60, 0.5).name('世代/秒');
 gui.add(CONFIG, 'fit', { '全体を収める': 'contain', '埋める': 'cover' }).name('縦横比');
 gui.add(actions, 'restart').name('最初から (R)');
 const fx = gui.addFolder('実験');
-fx.add(CONFIG, 'ruleMorph').name('A ルールを少しずつ変形').onChange(rebuild);
-fx.add(CONFIG, 'regionRules').name('B 領域ごとのルール').onChange(rebuild);
+const cFlavor = fx.add(CONFIG, 'flavor', {
+  'なし（ぱっと切替）': 'none', 'A 少しずつ変形': 'morph', 'B 領域ごとのルール': 'region', 'A＋B': 'morph+region',
+}).name('ルールの味付け');
+const cMorph = [
+  fx.add(CONFIG, 'holdMax', 0, 2000, 10).name('　└ 保持（最大・世代）').onChange(live('holdMax')),
+  fx.add(CONFIG, 'morphMin', 1, 3000, 10).name('　└ 変形（最短・世代）').onChange(live('morphMin')),
+  fx.add(CONFIG, 'morphMax', 1, 3000, 10).name('　└ 変形（最長・世代）').onChange(live('morphMax')),
+];
+const cInject = fx.add(CONFIG, 'inject').name('C 上流から写真を流し込む');
+const cPeriod = fx.add(CONFIG, 'injectPeriod', 20, 600, 10).name('　└ 周期（世代）').onChange(live('injectPeriod'));
+cInject.domElement.title = '「流れる」のときだけ効きます。領域ごとに時期をずらして、周期ごとに写真を上流から流し込みます';
+const refreshFx = () => {
+  cMorph.forEach((c) => c.show(FLAVORS[CONFIG.flavor].ruleMorph));
+  cPeriod.show(CONFIG.inject);
+};
+cFlavor.onChange(() => { refreshFx(); rebuild(); });
+cInject.onChange((v) => { live('inject')(v); refreshFx(); });
+refreshFx();
 gui.add({ fs: toggleFullscreen }, 'fs').name('フルスクリーン (F)');
 gui.add({ ui: toggleUI }, 'ui').name('GUI を隠す (H)');
 
