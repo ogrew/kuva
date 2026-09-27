@@ -19,7 +19,7 @@ const CONFIG = {
   flatUnit: 'tile', // 塗り方 'tile'（マスごと） | 'state'（似た色ごと）
   flatColor: 'palette', // 塗りの色 'palette'（代表色） | 'mean'（平均色）
   // ---- 変化（時間とともに映像を変える仕組み）----
-  flavor: 'morph+region', // ルールの味付け（FLAVORS）。変えると最初から作り直し
+  flavor: 'morph',        // ルールの味付け（FLAVORS）。変えると最初から作り直し
   holdMax: 200,           // A：変形が終わってから次の変形までの最大世代数（即時反映）
   morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
   morphMax: 500,          // A：〃 最長（即時反映）
