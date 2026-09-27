@@ -81,7 +81,7 @@ let bitmap = null, imgName = '';
 let sim = null;
 let playing = true;
 let acc = 0;          // 次の世代までの端数（世代単位）
-let status = '写真をドロップしてください';
+let status = 'Drop an image';
 let uiVisible = true;
 
 // ---------- 作り直し ----------
@@ -90,7 +90,7 @@ function rebuild() {
   const t0 = performance.now();
   const { cw, ch } = cellDims();
   const g = gridLayout(bitmap.width, bitmap.height, cw, ch);
-  if (g.cols < 4 || g.rows < 4) { status = 'マスが大きすぎます（cellSize か高さ比を下げてください）'; return; }
+  if (g.cols < 4 || g.rows < 4) { status = 'Cells too large (lower Cell size or Aspect)'; return; }
   const padded = paddedCanvas(bitmap, g);
   const Ax = Math.max(1, Math.min(ANALYSIS_SUB, cw)), Ay = Math.max(1, Math.min(ANALYSIS_SUB, ch));
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * Ax, g.rows * Ay)), stride: g.cols * Ax };
@@ -105,7 +105,7 @@ function rebuild() {
   showSim();
   updateFlat();
   acc = 0;
-  status = `初期処理 ${Math.round(performance.now() - t0)}ms`;
+  status = `Built in ${Math.round(performance.now() - t0)} ms`;
 }
 
 // 今の世代を描画に渡す（模様のレイヤーを重ねたタイル番号）
@@ -121,7 +121,7 @@ function updateFlat() {
 let loadSeq = 0;
 async function loadImage(blob, name, seq = ++loadSeq, done = '') {
   try {
-    status = '読み込み中…';
+    status = 'Loading…';
     const bm = await loadBitmap(blob);
     if (seq !== loadSeq) return;
     bitmap = bm;
@@ -136,7 +136,7 @@ async function loadImage(blob, name, seq = ++loadSeq, done = '') {
     if (done) status = done;
   } catch (e) {
     console.error(e);
-    if (seq === loadSeq) status = '画像を読み込めませんでした';
+    if (seq === loadSeq) status = 'Could not load the image';
   }
 }
 
@@ -148,7 +148,7 @@ async function loadURL(url, name, done) {
     await loadImage(await r.blob(), name, seq, done);
   } catch (e) {
     console.error(e);
-    if (seq === loadSeq) status = `${name} を読み込めません`;
+    if (seq === loadSeq) status = `Could not load ${name}`;
   }
 }
 
@@ -181,11 +181,11 @@ function frame(t) {
 // 「状態」パネルに出す値（モニターが定期的に読む）
 function updateInfo() {
   stats.status = status;
-  stats.play = !sim ? '―' : playing ? '再生中' : '一時停止';
+  stats.play = !sim ? '―' : playing ? 'Playing' : 'Paused';
   stats.gen = sim ? sim.gen : 0;
   if (sim) {
     const { cw, ch } = renderer.grid;
-    stats.grid = `${sim.cols}×${sim.rows}（cell ${cw}×${ch}px）`;
+    stats.grid = `${sim.cols}×${sim.rows} (cell ${cw}×${ch}px)`;
     stats.regions = sim.regions.length;
     stats.seed = sim.P.seed;
     stats.image = `${imgName} ${bitmap.width}×${bitmap.height}`;
@@ -194,6 +194,12 @@ function updateInfo() {
 
 // ---------- GUI（Tweakpane v4） ----------
 const pane = new Pane({ title: 'kuva' });
+// パネルの先頭：名前と一行の説明。タイトルバー（押すと畳める）を大きくして、説明を足す
+{
+  const bar = pane.element.querySelector('.tp-rotv_b');
+  bar.classList.add('head');
+  bar.insertAdjacentHTML('beforeend', '<span class="sub">PHOTO × 1D CELLULAR AUTOMATA</span>');
+}
 // コードから CONFIG を書き換えたら guiSync() を呼ぶ。pane.refresh() は change イベントを出すので、その間は処理を止める
 let guiSyncing = false;
 function guiSync() {
@@ -211,21 +217,21 @@ const tip = (b, text) => { b.element.title = text; };
 
 // 状態（読み取り専用のモニター。左下の別パネル）
 const stats = { status: '', play: '―', gen: 0, rate: 0, grid: '―', regions: 0, seed: 0, image: '―' };
-const statPane = new Pane({ title: '状態', container: document.getElementById('stat') });
+const statPane = new Pane({ title: 'Status', container: document.getElementById('stat') });
 const mon = (key, label, opts = {}) => statPane.addBinding(stats, key, { label, readonly: true, ...opts });
-mon('status', 'メッセージ');
-mon('play', '再生');
-mon('gen', '世代', { format: (v) => String(Math.round(v)) });
-mon('rate', '世代/秒（実測）', { format: (v) => v.toFixed(1) });
+mon('status', 'Message');
+mon('play', 'State');
+mon('gen', 'Gen', { format: (v) => String(Math.round(v)) });
+mon('rate', 'Gen/s', { format: (v) => v.toFixed(1) });
 mon('rate', '', { view: 'graph', min: 0, max: 60 });
-mon('grid', 'grid');
-mon('regions', '領域', { format: (v) => String(Math.round(v)) });
-mon('seed', 'seed', { format: (v) => String(Math.round(v)) });
-mon('image', '写真');
+mon('grid', 'Grid');
+mon('regions', 'Regions', { format: (v) => String(Math.round(v)) });
+mon('seed', 'Seed', { format: (v) => String(Math.round(v)) });
+mon('image', 'Image');
 
-// 基本
-const f1 = pane.addFolder({ title: '基本' });
-onRebuild(num(f1, 'seed', 'seed', 0, 999999, 1));
+// Grid（グリッドと状態数。すべて作り直し）
+const f1 = pane.addFolder({ title: 'Grid' });
+tip(onRebuild(num(f1, 'seed', 'Seed', 0, 999999, 1)), 'Random seed. Same image, parameters and seed give the same video');
 let cCell = null;
 // cellSize のスライダーを今の写真の範囲で作り直す（Tweakpane はあとから min・max を変えられないので、同じ位置に作り直す）。
 // 範囲の外にある値は範囲内に寄せる
@@ -234,60 +240,70 @@ function updateCellRange() {
   CONFIG.cellSize = Math.min(max, Math.max(min, Math.round(CONFIG.cellSize)));
   let index;
   if (cCell) { index = f1.children.indexOf(cCell); cCell.dispose(); }
-  cCell = f1.addBinding(CONFIG, 'cellSize', { label: `cellSize (幅px ${min}〜${max})`, min, max, step: 1, index });
+  cCell = f1.addBinding(CONFIG, 'cellSize', { label: 'Cell size', min, max, step: 1, index });
   onRebuild(cCell, () => aspectName()); // aspectName はこの下で定義される
-  tip(cCell, '写真の短辺の 0.5%〜12.5% の範囲。写真を入れ替えると範囲も変わります');
+  tip(cCell, `Cell width in image px (${min}–${max}: 0.5%–12.5% of the short side). The range changes with the image`);
 }
 updateCellRange();
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
 const cAspect = num(f1, 'cellAspect', '', 0, ASPECTS.length - 1, 1);
-const aspectName = () => { const d = cellDims(); cAspect.label = `高さ比 ×${d.label}（${d.cw}×${d.ch}px）`; };
+const aspectName = () => { const d = cellDims(); cAspect.label = `Aspect ×${d.label} (${d.cw}×${d.ch})`; };
 onRebuild(cAspect, aspectName);
+tip(cAspect, 'Cell height = width × 1/5 … 5');
 aspectName();
-onRebuild(num(f1, 'K', 'K (色数)', 2, 12, 1));
-onRebuild(list(f1, 'motion', '動き方', { '流れる': 'flow', 'その場で変化': 'ca' }));
-const cDir = list(f1, 'direction', '進行方向', { 'ALL': 'all', '下': 'down', '上': 'up', '右': 'right', '左': 'left' });
-onLive(cDir, 'direction');
-tip(cDir, 'ALL：領域ごとに違う向き（E では、ときどき変わる）／それ以外：全領域をその向きに流す');
-onLive(num(f1, 'chaos', 'chaos (ランダム混入)', 0, 1, 0.01), 'chaos');
-num(f1, 'gps', '世代/秒', 0.5, 60, 0.5); // 再生ループが毎フレーム読む
+tip(onRebuild(num(f1, 'K', 'Colors', 2, 12, 1)), 'Number of states (K). Cells are clustered into K colors by k-means');
 
-// 描画（描画だけに効く。作り直し不要）
-const f2 = pane.addFolder({ title: '描画' });
-list(f2, 'fit', '縦横比', { '全体を収める': 'contain', '埋める': 'cover' });
-const cFlat = num(f2, 'flatRatio', '塗りつぶし割合', 0, 1, 0.01);
+// Motion（動き方と速さ）
+const f2 = pane.addFolder({ title: 'Motion' });
+tip(onRebuild(list(f2, 'motion', 'Motion', { 'Flow': 'flow', 'In place': 'ca' })),
+  'Flow: the space-time diagram flows through each region\nIn place: each row changes in place as a 1D CA (for comparison)');
+const cDir = list(f2, 'direction', 'Direction', { 'All': 'all', 'Down': 'down', 'Up': 'up', 'Right': 'right', 'Left': 'left' });
+onLive(cDir, 'direction');
+tip(cDir, 'All: each region flows its own way (changes now and then with Region tempo)\nOthers: every region flows that way');
+tip(onLive(num(f2, 'chaos', 'Chaos', 0, 1, 0.01), 'chaos'), 'Share of fully random entries mixed into the rule tables');
+tip(num(f2, 'gps', 'Speed', 0.5, 60, 0.5), 'Generations per second'); // 再生ループが毎フレーム読む
+
+// Render（描画だけに効く。作り直し不要）
+const f3 = pane.addFolder({ title: 'Render' });
+tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
+const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.01);
 const cFlatSub = [
-  list(f2, 'flatUnit', '　└ 塗り方', { 'マスごと': 'tile', '似た色ごと': 'state' }),
-  list(f2, 'flatColor', '　└ 塗りの色', { '代表色': 'palette', '平均色': 'mean' }),
+  list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
+  list(f3, 'flatColor', '　└ Color', { 'Palette': 'palette', 'Mean': 'mean' }),
 ];
-tip(cFlat, 'CA で運ばれてきたマス（元の位置にない写真タイル）のうち、写真の代わりに一色で塗る割合。0 なら塗らない');
-tip(cFlatSub[0], 'マスごと：写真タイルごとに、塗るかどうかを決める\n似た色ごと：K色に分けたとき同じ色になるタイルを、まとめて塗る');
-tip(cFlatSub[1], '代表色：K色のうち、そのタイルが属する色\n平均色：そのタイル自身の平均の色');
+tip(cFlat, 'Share of carried cells (photo tiles away from their original place) painted in a flat color instead. 0 = off');
+tip(cFlatSub[0], 'Per tile: decide for each photo tile\nPer color: paint all tiles of the same K color together');
+tip(cFlatSub[1], 'Palette: the K color the tile belongs to\nMean: the tile\'s own average color');
 const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRatio > 0); });
 [cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));
 refreshFlat();
 
-// 変化（時間とともに映像を変える仕組み）
-const fx = pane.addFolder({ title: '変化' });
-const cFlavor = list(fx, 'flavor', 'ルールの味付け', {
-  'なし（ぱっと切替）': 'none', '少しずつ変形': 'morph', '領域ごとのルール': 'region', '両方': 'morph+region',
+// Evolve（時間とともに映像を変える仕組み）
+const fx = pane.addFolder({ title: 'Evolve' });
+const cFlavor = list(fx, 'flavor', 'Rule mode', {
+  'Switch': 'none', 'Morph': 'morph', 'Per region': 'region', 'Morph + region': 'morph+region',
 });
+tip(cFlavor, 'Switch: swap rules at once\nMorph: blend into the next rule over hundreds of generations\nPer region: each region gets its own rules\nMorph + region: both');
 const cMorph = [
-  num(fx, 'holdMax', '　└ 保持（最大・世代）', 0, 2000, 10),
-  num(fx, 'morphMin', '　└ 変形（最短・世代）', 1, 3000, 10),
-  num(fx, 'morphMax', '　└ 変形（最長・世代）', 1, 3000, 10),
+  num(fx, 'holdMax', '　└ Hold max', 0, 2000, 10),
+  num(fx, 'morphMin', '　└ Morph min', 1, 3000, 10),
+  num(fx, 'morphMax', '　└ Morph max', 1, 3000, 10),
 ];
 cMorph.forEach((c) => onLive(c, c.key));
-const cInject = fx.addBinding(CONFIG, 'inject', { label: '写真を流し込む' });
-tip(cInject, '「流れる」のときだけ効きます。領域ごとに時期をずらして、周期ごとに写真を上流から流し込みます');
-const cPeriod = num(fx, 'injectPeriod', '　└ 周期（世代）', 20, 600, 10);
+tip(cMorph[0], 'Longest hold between morphs (generations)');
+tip(cMorph[1], 'Shortest morph (generations)');
+tip(cMorph[2], 'Longest morph (generations)');
+const cInject = fx.addBinding(CONFIG, 'inject', { label: 'Reinject' });
+tip(cInject, 'Flow only. Periodically feeds the photo in from upstream, staggered per region');
+const cPeriod = num(fx, 'injectPeriod', '　└ Period', 20, 600, 10);
+tip(cPeriod, 'Reinject period (generations)');
 onLive(cPeriod, 'injectPeriod');
-const cTempo = fx.addBinding(CONFIG, 'tempo', { label: '領域ごとのテンポ' });
-tip(cTempo, '領域ごとに進む速さが違います。100〜500世代ごとに速さが変わり、ときどき流れる向きも変わります');
+const cTempo = fx.addBinding(CONFIG, 'tempo', { label: 'Region tempo' });
+tip(cTempo, 'Each region runs at its own speed, which changes every 100–500 generations. The flow direction sometimes changes too');
 const cTempoRange = ['tempoFast', 'tempoSlow'].map((k) => num(fx, k, '', 0, TEMPOS.length - 1, 1));
 const tempoName = () => {
-  cTempoRange[0].label = `　└ 最速 ${TEMPO_LABELS[CONFIG.tempoFast]}`;
-  cTempoRange[1].label = `　└ 最遅 ${TEMPO_LABELS[CONFIG.tempoSlow]}`;
+  cTempoRange[0].label = `　└ Fastest ${TEMPO_LABELS[CONFIG.tempoFast]}`;
+  cTempoRange[1].label = `　└ Slowest ${TEMPO_LABELS[CONFIG.tempoSlow]}`;
 };
 cTempoRange.forEach((c) => onLive(c, c.key, tempoName));
 tempoName();
@@ -301,15 +317,15 @@ onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
 
-// 模様（基本セルオートマトンの模様を重ねる）
-const fe = pane.addFolder({ title: '模様' });
-const cPat = num(fe, 'patFrac', '重ねる領域の割合', 0, 1, 0.01);
+// Pattern（基本セルオートマトンの模様を重ねる）
+const fe = pane.addFolder({ title: 'Pattern' });
+const cPat = num(fe, 'patFrac', 'Amount', 0, 1, 0.01);
 onLive(cPat, 'patFrac');
-tip(cPat, 'この割合の領域（行の長さが24マス以上）に、基本セルオートマトンの模様を重ねる。模様は領域ごとに1枚の写真タイルで描く。使うルールは下のチェックボックスで選ぶ');
+tip(cPat, 'Share of regions (rows of 24+ cells) overlaid with an elementary CA pattern, drawn with one photo tile per region. Pick the rules below');
 // 模様に使うルール：ルールごとのチェックボックス。各領域は ON のルールの中から1つ選ぶ
 const patOn = Object.fromEntries(Object.keys(PAT_RULES).map((r) => [r, CONFIG.patRules.includes(+r)]));
 for (const r of Object.keys(PAT_RULES)) {
-  const c = fe.addBinding(patOn, r, { label: `　└ ルール${r}` });
+  const c = fe.addBinding(patOn, r, { label: `　└ Rule ${r}` });
   c.on('change', () => {
     CONFIG.patRules = Object.keys(patOn).filter((k) => patOn[k]).map(Number);
     if (sim) sim.set('patRules', CONFIG.patRules);
@@ -335,7 +351,7 @@ function newSeed() {
 }
 
 function togglePlay() { setPlaying(!playing); }
-const AUTO_PAUSED = 'タブが非アクティブになったので一時停止しました';
+const AUTO_PAUSED = 'Paused (tab hidden)';
 function setPlaying(v) {
   playing = v;
   if (playing && status === AUTO_PAUSED) status = '';
@@ -352,7 +368,7 @@ document.addEventListener('visibilitychange', () => {
 
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch((e) => { status = `フルスクリーンにできません（${e.message}）`; });
+  else document.documentElement.requestFullscreen().catch((e) => { status = `Fullscreen failed (${e.message})`; });
 }
 
 function toggleUI() {
@@ -385,7 +401,7 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   const f = e.dataTransfer.files[0];
   if (!f) return;
-  if (!f.type.startsWith('image/')) { status = '画像ファイルをドロップしてください'; return; }
+  if (!f.type.startsWith('image/')) { status = 'Drop an image file'; return; }
   loadImage(f, f.name);
 });
 
@@ -394,7 +410,7 @@ const q = new URLSearchParams(location.search).get('img');
 if (q) loadURL(q, q.split('/').pop());
 else if (SAMPLES.length) {
   const s = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
-  loadURL(s.url, s.name, 'サンプル（D&Dで変更）');
+  loadURL(s.url, s.name, 'Sample (drop to replace)');
 }
 
 requestAnimationFrame(frame);
