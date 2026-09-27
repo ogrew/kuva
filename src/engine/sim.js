@@ -29,13 +29,13 @@ export const ENGINE_DEFAULTS = {
   switchProb: 0.01,    // 1世代ごとのルール切替確率
   entropySwitch: 0.15, // 領域がこれより一様になったら強制切替（0〜1）
   switchCooldown: 24,  // 切替後、次の切替を禁止する世代数（ruleMorph が false のとき）
-  ruleMorph: true,     // 実験 A：ルールをぱっと切り替えず、少しずつ変形させる
+  ruleMorph: true,     // A：ルールをぱっと切り替えず、少しずつ変形させる
   morphMin: 150, morphMax: 500, // 変形にかける世代数
   holdMax: 200,        // 変形が終わってから次の変形までの最大世代数
-  regionRules: true,   // 実験 B：ルールを領域ごとに作り、性格（GENRES）と写真へ戻る割合も抽選する
-  inject: false,       // 実験 C：flow で、上流から写真を流し込む
+  regionRules: true,   // B：ルールを領域ごとに作り、性格（GENRES）と写真へ戻る割合も抽選する
+  inject: false,       // C：flow で、上流から写真を流し込む
   injectPeriod: 200,   // 流し込みの周期（世代）
-  tempo: false,        // 実験 E：領域ごとのテンポ（何世代に1回進むか）。ときどき変わり、流れる向きも変わる
+  tempo: false,        // E：領域ごとのテンポ（何世代に1回進むか）。ときどき変わり、流れる向きも変わる
   tempoFast: 1,        // テンポの範囲（TEMPOS の番号）。最速
   tempoSlow: 4,        // 〃 最遅
   tempoHoldMin: 100, tempoHoldMax: 500, // テンポを引き直す間隔（世代）

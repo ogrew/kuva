@@ -17,12 +17,12 @@ const CONFIG = {
   flatRatio: 0,   // 塗りつぶし：元の位置にないタイルのうち、一色で塗る割合（0 = 塗らない。即時反映）
   flatUnit: 'tile', // 塗り方 'tile'（マスごと） | 'state'（似た色ごと）
   flatColor: 'palette', // 塗りの色 'palette'（代表色） | 'mean'（平均色）
-  // ---- 実験（見比べ用）----
+  // ---- 変化（時間とともに映像を変える仕組み）----
   flavor: 'morph+region', // ルールの味付け（FLAVORS）。変えると最初から作り直し
   holdMax: 200,           // A：変形が終わってから次の変形までの最大世代数（即時反映）
   morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
   morphMax: 500,          // A：〃 最長（即時反映）
-  inject: false,          // C：上流から写真を流し込む（即時反映。流れるのときだけ効く）
+  inject: false,          // C：写真を流し込む（即時反映。流れるのときだけ効く）
   injectPeriod: 200,      // C：流し込みの周期（世代）（即時反映）
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
@@ -58,6 +58,15 @@ const cellDims = () => {
   const a = ASPECTS[Math.round(CONFIG.cellAspect)] || ASPECTS[4];
   return { cw, ch: Math.max(2, Math.round(cw * a.p)), label: a.label };
 };
+// サイトを開いたときにランダムに決めるもの：seed、K、動き方、cellSize
+// cellSize は写真の短辺の 1%〜6%（対数で一様）。範囲いっぱい（0.5%〜12.5%）だと粗すぎて写真が分からない回が多いため。
+// 写真の大きさが分かるのは最初の写真を読み込んだときなので、割合だけ先に決めておく
+const RANDOM_K = [4, 10], RANDOM_CELL_FRAC = [0.01, 0.06];
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+CONFIG.seed = Math.floor(Math.random() * 1e6);
+CONFIG.K = Math.floor(rand(RANDOM_K[0], RANDOM_K[1] + 1));
+CONFIG.motion = Math.random() < 0.5 ? 'flow' : 'ca';
+let pendingCellFrac = Math.exp(rand(Math.log(RANDOM_CELL_FRAC[0]), Math.log(RANDOM_CELL_FRAC[1])));
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
 const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっくりになるだけで、世代の中身は変わらない）
 
@@ -110,6 +119,10 @@ async function loadImage(blob, name, seq = ++loadSeq, done = '') {
     if (seq !== loadSeq) return;
     bitmap = bm;
     imgName = name;
+    if (pendingCellFrac) { // 最初の写真だけ、cellSize をランダムに決める
+      CONFIG.cellSize = Math.round(pendingCellFrac * Math.min(bm.width, bm.height));
+      pendingCellFrac = 0;
+    }
     updateCellRange();
     aspectName();
     rebuild();
@@ -247,10 +260,10 @@ const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRati
 [cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));
 refreshFlat();
 
-// 実験
-const fx = pane.addFolder({ title: '実験' });
+// 変化（時間とともに映像を変える仕組み）
+const fx = pane.addFolder({ title: '変化' });
 const cFlavor = list(fx, 'flavor', 'ルールの味付け', {
-  'なし（ぱっと切替）': 'none', 'A 少しずつ変形': 'morph', 'B 領域ごとのルール': 'region', 'A＋B': 'morph+region',
+  'なし（ぱっと切替）': 'none', '少しずつ変形': 'morph', '領域ごとのルール': 'region', '両方': 'morph+region',
 });
 const cMorph = [
   num(fx, 'holdMax', '　└ 保持（最大・世代）', 0, 2000, 10),
@@ -258,11 +271,11 @@ const cMorph = [
   num(fx, 'morphMax', '　└ 変形（最長・世代）', 1, 3000, 10),
 ];
 cMorph.forEach((c) => onLive(c, c.key));
-const cInject = fx.addBinding(CONFIG, 'inject', { label: 'C 上流から写真を流し込む' });
+const cInject = fx.addBinding(CONFIG, 'inject', { label: '写真を流し込む' });
 tip(cInject, '「流れる」のときだけ効きます。領域ごとに時期をずらして、周期ごとに写真を上流から流し込みます');
 const cPeriod = num(fx, 'injectPeriod', '　└ 周期（世代）', 20, 600, 10);
 onLive(cPeriod, 'injectPeriod');
-const cTempo = fx.addBinding(CONFIG, 'tempo', { label: 'E 領域ごとのテンポ' });
+const cTempo = fx.addBinding(CONFIG, 'tempo', { label: '領域ごとのテンポ' });
 tip(cTempo, '領域ごとに進む速さが違います。100〜500世代ごとに速さが変わり、ときどき流れる向きも変わります');
 const cTempoRange = ['tempoFast', 'tempoSlow'].map((k) => num(fx, k, '', 0, TEMPOS.length - 1, 1));
 const tempoName = () => {
@@ -281,13 +294,17 @@ onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
 
-// 操作ボタン（一番下にまとめる）
+// キー操作の一覧（パネルの一番下。ボタンは置かず、操作はキーだけ）
 pane.addBlade({ view: 'separator' });
-const cPlay = pane.addButton({ title: 'PAUSE(Space)' }).on('click', () => togglePlay());
-pane.addButton({ title: 'NEW SEED(N)' }).on('click', () => newSeed());
-pane.addButton({ title: 'RESET(R)' }).on('click', () => rebuild());
-pane.addButton({ title: 'FULLSCREEN(F)' }).on('click', () => toggleFullscreen());
-pane.addButton({ title: 'HIDE GUI(H)' }).on('click', () => toggleUI());
+{
+  const keys = document.createElement('dl');
+  keys.className = 'keys';
+  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI']]) {
+    keys.insertAdjacentHTML('beforeend', `<dt>${k}</dt><dd>${v}</dd>`);
+  }
+  // パネルの中身の入れ物に入れる（タイトルを押して畳んだときに一緒に隠れるように）
+  pane.element.querySelector('.tp-rotv_c').appendChild(keys);
+}
 
 function newSeed() {
   CONFIG.seed = Math.floor(Math.random() * 1e6);
@@ -300,7 +317,6 @@ const AUTO_PAUSED = 'タブが非アクティブになったので一時停止�
 function setPlaying(v) {
   playing = v;
   if (playing && status === AUTO_PAUSED) status = '';
-  cPlay.title = playing ? 'PAUSE(Space)' : 'PLAY(Space)';
 }
 
 // タブが見えなくなったら（タブの切り替え・最小化など）一時停止する。見えるようになっても自動では再開しない。
