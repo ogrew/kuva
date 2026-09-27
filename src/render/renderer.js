@@ -140,15 +140,27 @@ export class Renderer {
   draw(fit) {
     const gl = this.gl, c = this.canvas;
     this.resize();
-    gl.viewport(0, 0, c.width, c.height);
-    gl.clearColor(0, 0, 0, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    if (!this.grid) return;
-    const { cols, rows, ox, oy, W, H, cw, ch } = this.grid;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (!this.grid) {
+      gl.viewport(0, 0, c.width, c.height);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return;
+    }
+    const { W, H } = this.grid;
     // 写真 1px をキャンバス何 px で描くか
     const s = (fit === 'cover' ? Math.max : Math.min)(c.width / W, c.height / H);
-    const dx = (c.width - W * s) / 2, dy = (c.height - H * s) / 2;
-    const scale = [1 / (s * cw), 1 / (s * ch)]; // キャンバス 1px = グリッド何セルか
+    this.drawTo(c.width, c.height, s, s, (c.width - W * s) / 2, (c.height - H * s) / 2);
+  }
+
+  // 今バインドされている描画先（w×h px）に描く。sx, sy = 写真 1px を描画先の何 px にするか、dx, dy = 写真の左上の位置
+  drawTo(w, h, sx, sy, dx, dy) {
+    const gl = this.gl;
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const { cols, rows, ox, oy, W, H, cw, ch } = this.grid;
+    const scale = [1 / (sx * cw), 1 / (sy * ch)]; // 描画先 1px = グリッド何セルか
     const min = [ox / cw, oy / ch];
 
     gl.useProgram(this.prog);
@@ -164,11 +176,45 @@ export class Renderer {
     gl.uniform1i(u.uCols, cols);
     gl.uniform2f(u.uGrid, cols, rows);
     gl.uniform2f(u.uTexSize, this.texSize[0], this.texSize[1]);
-    gl.uniform1f(u.uCanvasH, c.height);
+    gl.uniform1f(u.uCanvasH, h);
     gl.uniform2f(u.uOff, min[0] - dx * scale[0], min[1] - dy * scale[1]);
     gl.uniform2f(u.uScale, scale[0], scale[1]);
     gl.uniform2f(u.uImgMin, min[0], min[1]);
     gl.uniform2f(u.uImgMax, min[0] + W / cw, min[1] + H / ch);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // 今の世代を、元写真の範囲だけ・写真テクスチャと同じ解像度で描いて、2D キャンバスで返す（画面の表示には関係しない）
+  snapshot() {
+    if (!this.grid) return null;
+    const gl = this.gl, { W, H, GW } = this.grid;
+    const k = this.texSize[0] / GW; // 元写真 1px = 写真テクスチャ何 px か
+    const lim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), ...gl.getParameter(gl.MAX_VIEWPORT_DIMS));
+    const f = Math.min(k, lim / Math.max(W, H));
+    const w = Math.max(1, Math.round(W * f)), h = Math.max(1, Math.round(H * f));
+
+    const rb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, rb);
+    const px = new Uint8Array(w * h * 4);
+    try {
+      // 縦横を別々に合わせて、端まで写真で埋める（丸めで余白の線が出ないように）
+      this.drawTo(w, h, w / W, h / H, 0, 0);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteFramebuffer(fb);
+      gl.deleteRenderbuffer(rb);
+    }
+    // readPixels は下の行から並ぶので、上下を入れ替える
+    const img = new ImageData(w, h), row = w * 4;
+    for (let y = 0; y < h; y++) img.data.set(px.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    cv.getContext('2d').putImageData(img, 0, 0);
+    return cv;
   }
 }
