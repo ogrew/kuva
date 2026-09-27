@@ -43,10 +43,10 @@ const FLAVORS = {
 // マスの高さ比率の段階（高さ = 幅 × p）。kivi と同じ
 // cellSize の範囲は写真の短辺に対する割合で決める（写真が変わると範囲も変わる）
 //   最小：短辺の 0.5%（短辺が約200マス。写真の大きさに関係なくマスの数が一定になり、重さも一定）
-//   最大：短辺の 12.5%（短辺が8マス。これより粗いと領域に分けたときに CA らしさが出にくい）
-const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = 0.125, CELL_MIN_PX = 4;
+//   最大：短辺の 6.25%（短辺が16マス。これより粗いと領域に分けたときに CA らしさが出にくい）
+const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = 0.0625, CELL_MIN_PX = 4;
 const cellRange = () => {
-  if (!bitmap) return { min: 12, max: 128 };
+  if (!bitmap) return { min: 12, max: 64 };
   const s = Math.min(bitmap.width, bitmap.height);
   const min = Math.max(CELL_MIN_PX, Math.round(s * CELL_MIN_FRAC));
   return { min, max: Math.max(min + 1, Math.round(s * CELL_MAX_FRAC)) };
@@ -63,7 +63,7 @@ const cellDims = () => {
   return { cw, ch: Math.max(2, Math.round(cw * a.p)), label: a.label };
 };
 // サイトを開いたときにランダムに決めるもの：seed、K、動き方、cellSize
-// cellSize は写真の短辺の 1%〜6%（対数で一様）。範囲いっぱい（0.5%〜12.5%）だと粗すぎて写真が分からない回が多いため。
+// cellSize は写真の短辺の 1%〜6%（対数で一様）。
 // 写真の大きさが分かるのは最初の写真を読み込んだときなので、割合だけ先に決めておく
 const RANDOM_K = [4, 10], RANDOM_CELL_FRAC = [0.01, 0.06];
 const rand = (lo, hi) => lo + Math.random() * (hi - lo);
@@ -242,7 +242,7 @@ function updateCellRange() {
   if (cCell) { index = f1.children.indexOf(cCell); cCell.dispose(); }
   cCell = f1.addBinding(CONFIG, 'cellSize', { label: 'Cell size', min, max, step: 1, index });
   onRebuild(cCell, () => aspectName()); // aspectName はこの下で定義される
-  tip(cCell, `Cell width in image px (${min}–${max}: 0.5%–12.5% of the short side). The range changes with the image`);
+  tip(cCell, `Cell width in image px (${min}–${max}: 0.5%–6.25% of the short side). The range changes with the image`);
 }
 updateCellRange();
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
