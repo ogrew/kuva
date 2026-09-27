@@ -9,8 +9,13 @@
     /* 「状態」パネル（左下） */
     #stat { position: fixed; left: 8px; bottom: 8px; width: 320px; }
     body.bare { cursor: none; }
-    /* Tweakpane：日本語の長いラベルが切れないよう幅を広げ、画面より高いときはスクロールさせる。Tweakpane が後から入れる CSS に負けないよう html を付けている（kivi と同じ） */
+    /* Tweakpane：長いラベルが切れないよう幅を広げ、画面より高いときはスクロールさせる。Tweakpane が後から入れる CSS に負けないよう html を付けている（kivi と同じ） */
     html .tp-dfwv { width: 360px; max-height: calc(100vh - 16px); overflow-y: auto; }
+    /* パネルの先頭（タイトルバーを大きくして、名前と説明を出す） */
+    html .tp-rotv_b.head { height: auto; line-height: 1; padding: 14px 12px 12px; text-align: left; white-space: normal; }
+    html .tp-rotv_b.head .tp-rotv_t { display: block; font-size: 26px; font-weight: 700; letter-spacing: 0.02em; }
+    html .tp-rotv_b.head .sub { display: block; margin-top: 8px; font-size: 10px; letter-spacing: 0.2em; opacity: 0.6; }
+    html .tp-rotv_b.head .tp-rotv_m { top: 18px; bottom: auto; }
     /* キー操作の一覧（パネルの一番下）。色と文字は Tweakpane に合わせる */
     .keys { display: grid; grid-template-columns: 5em 1fr; gap: 2px 8px; margin: 0; padding: 4px 8px 8px;
       font: 11px/1.6 var(--tp-base-font-family, monospace); color: var(--tp-label-foreground-color, #aaa); }
