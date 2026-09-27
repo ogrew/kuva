@@ -35,9 +35,11 @@ npm run dev
 # → http://localhost:5173/
 ```
 
-ブラウザ（**Chrome デスクトップ**）で開き、写真をドラッグ&ドロップすると、初期処理のあと再生が始まります。再生中に別の写真をドロップすると入れ替わります。
+ブラウザ（**Chrome デスクトップ**）で開くと、サンプル画像（`samples/` にあるもの）からランダムに1枚を選んで再生が始まります。写真をドラッグ&ドロップすると、その写真に入れ替わります。
 
-開発用に `?img=画像のURL` でも読み込めます（例：`http://localhost:5173/?img=/samples/photo.jpg`。`samples/` は `.gitignore` の対象です）。
+サンプル画像は `samples/` に置くだけで候補に入ります（PNG・JPEG・WebP）。今入っている6枚は、AI で生成した画像です。
+
+開発用に `?img=画像のURL` でも読み込めます（例：`http://localhost:5173/?img=/samples/sample01.png`）。
 
 | ライブラリ | 用途 |
 |---|---|
@@ -110,6 +112,7 @@ src/
     rules.js            ルール表（性格、chaos の即時反映）
     regions.js          領域の再帰分割（kivi から流用）
     flat.js             塗りつぶすタイルの選び方（kivi の pickFlat を kuva 向けに）
+samples/                サンプル画像（開いたときにランダムに1枚を表示）
     motions.js          領域の動き方（流れる／その場で変化／元写真のまま）、ルールの変形、写真の流し込み
     rng.js              乱数とハッシュ
   render/renderer.js    WebGL2 描画

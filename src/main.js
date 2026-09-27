@@ -91,17 +91,38 @@ function updateFlat() {
   renderer.setFlat(CONFIG.flatRatio > 0 ? flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor) : null);
 }
 
-async function loadImage(blob, name) {
+// 読み込みの順番。読み込み中に別の写真がドロップされたら、古いほうの結果は捨てる
+let loadSeq = 0;
+async function loadImage(blob, name, seq = ++loadSeq, done = '') {
   try {
     status = '読み込み中…';
-    bitmap = await loadBitmap(blob);
+    const bm = await loadBitmap(blob);
+    if (seq !== loadSeq) return;
+    bitmap = bm;
     imgName = name;
     rebuild();
+    if (done) status = done;
   } catch (e) {
     console.error(e);
-    status = '画像を読み込めませんでした';
+    if (seq === loadSeq) status = '画像を読み込めませんでした';
   }
 }
+
+async function loadURL(url, name, done) {
+  const seq = ++loadSeq;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status);
+    await loadImage(await r.blob(), name, seq, done);
+  } catch (e) {
+    console.error(e);
+    if (seq === loadSeq) status = `${name} を読み込めません`;
+  }
+}
+
+// サンプル画像（samples/ にあるもの）。一覧はビルド時に作られるので、画像を足すだけで候補に入る
+const SAMPLES = Object.entries(import.meta.glob('/samples/*.{png,jpg,jpeg,webp}', { eager: true, query: '?url', import: 'default' }))
+  .map(([path, url]) => ({ name: path.split('/').pop(), url }));
 
 // ---------- 再生ループ ----------
 // 映像の中身は世代番号だけで決まる。壁時計は「いつ step するか」にしか使わない
@@ -307,8 +328,12 @@ window.addEventListener('drop', (e) => {
   loadImage(f, f.name);
 });
 
-// 開発用：?img=URL で読み込む
+// 最初の写真：?img=URL があればそれ（開発用）、なければサンプル画像からランダムに1枚
 const q = new URLSearchParams(location.search).get('img');
-if (q) fetch(q).then((r) => r.blob()).then((b) => loadImage(b, q.split('/').pop())).catch(() => { status = `${q} を読み込めません`; });
+if (q) loadURL(q, q.split('/').pop());
+else if (SAMPLES.length) {
+  const s = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
+  loadURL(s.url, s.name, 'サンプル画像（ドロップで入れ替え）');
+}
 
 requestAnimationFrame(frame);

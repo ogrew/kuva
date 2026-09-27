@@ -3,4 +3,7 @@ node_modules/
 dist/
 *.png
 *.jpg
+# サンプル画像（公開ページで最初に表示する）はコミットする
+!samples/*.png
+!samples/*.jpg
 .claude/

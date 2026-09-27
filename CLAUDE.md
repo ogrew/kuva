@@ -38,7 +38,8 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `src/engine/flat.js` | 塗りつぶすタイルの選び方（描画だけに効く）。結果はタイルごとの RGBA で、描画に渡す |
 | `src/image.js` | グリッド配置、パディング、縮小。kivi の sketch.js から |
 | `src/render/renderer.js` | WebGL2。写真テクスチャと `src` テクスチャ（R32I）の2枚 |
-| `src/main.js` | 画像の読み込み（D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
+| `samples/` | サンプル画像。開いたときにランダムに1枚を読み込む。一覧は `import.meta.glob` でビルド時に作るので、置くだけで候補に入る。公開される（AI 生成の画像。埋め込みの XMP は生成元のラベルと ID だけ） |
+| `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
 
 ## エンジンのパイプライン
 
@@ -120,7 +121,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | 対象ブラウザ | Chrome デスクトップのみ |
 | 技術構成 | Vite（素の JS、TypeScript なし）。依存は Tweakpane のみ。描画は素の WebGL2 |
 | リポジトリ | `ogrew/kuva`（公開）。GitHub Pages で https://ogrew.github.io/kuva/ に公開（main への push で自動デプロイ） |
-| 公開に関して | 履歴を公開前に書き換え、コミットの作者メールは GitHub の noreply（`21966381+ogrew@users.noreply.github.com`、このリポジトリの git 設定）にした。個人のメールアドレス・ローカルのパス・秘密情報をコミットに入れないこと |
+| 公開に関して | 履歴を公開前に書き換え、コミットの作者メールは GitHub の noreply（`21966381+ogrew@users.noreply.github.com`、このリポジトリの git 設定）にした。個人のメールアドレス・ローカルのパス・秘密情報をコミットに入れないこと。サンプル画像を足すときは、埋め込みのメタデータ（EXIF の位置情報など）も確かめる |
 
 ## 未確定
 
@@ -153,7 +154,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
   - 意図した変更なら `ENGINE_VERSION` を上げてから `npm run golden` で更新する。**バージョンを上げずにゴールデンだけ更新しないこと**
   - 生成結果が変わらないリファクタリングや、OFF の機能の追加では、ゴールデンが通ることが「変わっていない」ことの確認になる
 - 条件はテスト共通の `test/helpers.js`（`fakeIO`、`GOLDEN_CASES`）
-- UI と描画は `npm test` で確認できない。変更後は dev サーバ（`npm run dev`）で開き、`?img=/samples/…` で写真を読み込んで確認する。D&D は、JS で `DragEvent('drop')` を発生させれば確かめられる
+- UI と描画は `npm test` で確認できない。変更後は dev サーバ（`npm run dev`）で開いて確認する（サンプル画像が自動で読み込まれる。特定の写真は `?img=/samples/…`）。D&D は、JS で `DragEvent('drop')` を発生させれば確かめられる
 - 映像の見た目（繰り返し感、流れ方）は静止画ではわかりにくい。数値（1世代で変わるマスの割合、写真らしさ）と、連続スクリーンショットを併用する。最終的な判断はユーザーが Chrome で見て行う
 
 ## 進め方
