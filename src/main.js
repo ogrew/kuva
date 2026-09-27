@@ -1,6 +1,7 @@
 // main.js — 画像の読み込み、GUI、キー操作、再生ループ
 import { Pane } from 'tweakpane';
 import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
+import { PAT_RULES } from './engine/motions.js';
 import { flatColors } from './engine/flat.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
 import { Renderer } from './render/renderer.js';
@@ -27,6 +28,9 @@ const CONFIG = {
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
   tempoSlow: 4,           // E：〃 最遅
+  // ---- 実験（見比べ用）----
+  patFrac: 0,             // 模様のレイヤーを重ねる領域の割合（即時反映）
+  patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
 // ルールの味付け → エンジンの設定
@@ -98,11 +102,14 @@ function rebuild() {
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
   const photo = k < 1 ? scaledCanvas(padded, Math.round(g.GW * k), Math.round(g.GH * k)) : padded;
   renderer.setPhoto(g, photo);
-  renderer.setSrc(sim.src);
+  showSim();
   updateFlat();
   acc = 0;
   status = `初期処理 ${Math.round(performance.now() - t0)}ms`;
 }
+
+// 今の世代を描画に渡す（模様のレイヤーを重ねたタイル番号）
+const showSim = () => renderer.setSrc(sim.displaySrc());
 
 // 塗りつぶしの色を作り直して描画に渡す（描画だけに効くので、作り直しは不要）
 function updateFlat() {
@@ -161,7 +168,7 @@ function frame(t) {
     let n = 0;
     while (acc >= 1 && n < MAX_STEPS_PER_FRAME) { sim.step(); acc -= 1; n++; }
     if (acc >= 1) acc = 0;
-    if (n) renderer.setSrc(sim.src);
+    if (n) showSim();
     rate.n += n;
   }
   if (t - rate.t >= 500) { stats.rate = (rate.n * 1000) / (t - rate.t); rate.t = t; rate.n = 0; }
@@ -293,6 +300,21 @@ onRebuild(cFlavor, refreshFx);
 onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
+
+// 実験（見比べ用）
+const fe = pane.addFolder({ title: '実験' });
+const cPat = num(fe, 'patFrac', '模様の領域の割合', 0, 1, 0.01);
+onLive(cPat, 'patFrac');
+tip(cPat, 'この割合の領域（行の長さが24マス以上）に、基本セルオートマトンの模様を重ねる。模様は領域ごとに1枚の写真タイルで描く。使うルールは下のチェックボックスで選ぶ');
+// 模様に使うルール：ルールごとのチェックボックス。各領域は ON のルールの中から1つ選ぶ
+const patOn = Object.fromEntries(Object.keys(PAT_RULES).map((r) => [r, CONFIG.patRules.includes(+r)]));
+for (const r of Object.keys(PAT_RULES)) {
+  const c = fe.addBinding(patOn, r, { label: `　└ ルール${r}` });
+  c.on('change', () => {
+    CONFIG.patRules = Object.keys(patOn).filter((k) => patOn[k]).map(Number);
+    if (sim) sim.set('patRules', CONFIG.patRules);
+  });
+}
 
 // キー操作の一覧（パネルの一番下。ボタンは置かず、操作はキーだけ）
 pane.addBlade({ view: 'separator' });

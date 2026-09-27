@@ -109,6 +109,7 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     this.flatOn = false;
+
   }
 
   /** colors = flatColors の結果（タイルごとの RGBA）。null なら塗らない */

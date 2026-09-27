@@ -4,7 +4,7 @@ import { mulberry32, hash } from './rng.js';
 import { analyze } from './analyze.js';
 import { makeRulePool, applyChaos } from './rules.js';
 import { subdivide } from './regions.js';
-import { MOTIONS } from './motions.js';
+import { MOTIONS, PAT_RULES } from './motions.js';
 
 // 生成ロジックを変えたら上げる
 export const ENGINE_VERSION = 1;
@@ -40,6 +40,9 @@ export const ENGINE_DEFAULTS = {
   tempoSlow: 4,        // 〃 最遅
   tempoHoldMin: 100, tempoHoldMax: 500, // テンポを引き直す間隔（世代）
   dirChangeProb: 0.3,  // テンポを引き直すとき、流れる向きも変える確率
+  patFrac: 0,          // 実験：模様のレイヤーを重ねる領域の割合（0 = なし）
+  patMinWidth: 24,     // 模様を重ねる領域の、行の長さ（マス）の最小。小さいと三角形が育たない
+  patRules: [30, 90, 110, 150], // 模様に使うルール（PAT_RULES の番号）。領域ごとにこの中からハッシュで1つ選ぶ
   direction: 'all',    // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'。固定中は E の向き変更も効かない
   // 領域
   maxDepth: 7,
@@ -71,6 +74,12 @@ export class Simulation {
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
     this.regions = subdivide(P, cols, rows, rng, io.cw ?? 1, io.ch ?? 1).map(([x, y, w, h], r) => {
       const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
+      // 模様のレイヤー（実験）：選ばれやすさ・置き直しの間隔・ルール。乱数は使わずハッシュ
+      g.patU = hash(P.seed, r, 0x706174) / 4294967296;
+      g.patV = hash(P.seed, r, 0x70657231) / 4294967296;
+      g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;
+      g.patRule = 0;
+      g.patT = 0;
       g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
       MOTIONS[g.motion].init(g, this);
       // E のテンポ用の乱数は別系列（E を切り替えても、他の乱数の流れは変わらない）
@@ -81,12 +90,15 @@ export class Simulation {
     });
 
     // 前の世代 / 次の世代。0世代は元写真そのもの（状態 = cls、タイル = 自分自身）
-    const mk = () => ({ state: this.cls.slice(), src: Int32Array.from({ length: N }, (_, i) => i) });
+    const mk = () => ({ state: this.cls.slice(), src: Int32Array.from({ length: N }, (_, i) => i), mask: new Uint8Array(N) });
     this.cur = mk();
     this.nxt = mk();
     this.gen = 0;
+    this.makeInk();
+    this.disp = new Int32Array(N);
     this.setChaos(P.chaos);
     this.set('direction', P.direction);
+    this.set('patRules', P.patRules);
   }
 
   // 次の世代から反映される
@@ -100,11 +112,20 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'chaos') this.setChaos(value);
     else this.P[key] = value;
+    if (key === 'patRules') {
+      // 使うルールが変わったら、領域ごとに選び直す。変わった領域は種から置き直す
+      const list = value.filter((r) => r in PAT_RULES).sort((a, b) => a - b);
+      this.P.patRules = list;
+      for (const g of this.regions) {
+        const r = list.length ? list[Math.floor(g.patRuleU * list.length)] : 0;
+        if (r !== g.patRule) { g.patRule = r; g.patReset = true; }
+      }
+    }
     if (key === 'direction') this.fixedDir = DIRECTIONS[value]; // 'all' なら undefined
     if (key === 'tempoFast' || key === 'tempoSlow') {
       // 範囲の外にいる領域は、すぐ範囲内に寄せる
@@ -149,4 +170,28 @@ export class Simulation {
 
   // 現在の世代で各セルに描く写真タイルの番号
   get src() { return this.cur.src; }
+
+  // 模様を描くタイル（inkTile、セルごと）：領域の写真が明るければ暗い状態（0）の、暗ければ明るい状態（K-1）の代表タイル
+  makeInk() {
+    const N = this.cols * this.rows, K = this.K;
+    this.inkTile = new Int32Array(N);
+    for (const g of this.regions) {
+      let lum = 0;
+      for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
+        const c = (y * this.cols + x) * 3;
+        lum += 0.2126 * this.mean[c] + 0.7152 * this.mean[c + 1] + 0.0722 * this.mean[c + 2];
+      }
+      const k = lum / (g.w * g.h) > 110 ? 0 : K - 1, tile = this.reps[k][0];
+      for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
+        this.inkTile[y * this.cols + x] = tile;
+      }
+    }
+  }
+
+  // 描画に渡すタイル番号。模様が 1 のマスは inkTile、それ以外は src そのもの（返す配列は使い回す）
+  displaySrc() {
+    const { src, mask } = this.cur, d = this.disp;
+    for (let i = 0; i < d.length; i++) d[i] = mask[i] ? this.inkTile[i] : src[i];
+    return d;
+  }
 }

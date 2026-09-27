@@ -15,6 +15,7 @@ const still = {
       const a = y * cols + g.x, b = a + g.w;
       next.state.set(prev.state.subarray(a, b), a);
       next.src.set(prev.src.subarray(a, b), a);
+      next.mask.set(prev.mask.subarray(a, b), a);
     }
   },
 };
@@ -76,7 +77,9 @@ function stepLines(g, sim, prev, next, flow) {
   const { x, y, w, h } = g;
   // 実際に流れる向き：進行方向が固定されていればそれ、ALL なら領域の向き
   const dir = sim.fixedDir ?? g.dir;
-  if (dir !== g.lastDir) { g.lastDir = dir; g.inj = -1; } // 向きが変わったら流し込みは打ち切る
+  // 向きが変わったら流し込みは打ち切り、模様は種から置き直す
+  let turned = false;
+  if (dir !== g.lastDir) { turned = g.lastDir !== undefined; g.lastDir = dir; g.inj = -1; }
   const vertical = dir < 2; // 下・上へ流れる = 1行が横に並ぶ
   const lineLen = vertical ? w : h, lineCount = vertical ? h : w;
   // start：先頭の行の0番目のセル、di：行内で隣へ進む差、dt：下流の行へ進む差
@@ -129,8 +132,43 @@ function stepLines(g, sim, prev, next, flow) {
       hist[o]++;
     }
   }
+  if (flow) stepPattern(g, sim, prev.mask, next.mask, start, di, dt, lineLen, lineCount, turned);
   if (g.morph) morphRule(g, sim, lineLen * lineCount);
   else switchRule(g, sim, lineLen * lineCount);
+}
+
+// 模様のルール（ウルフラムの基本セルオートマトンの番号）と、種の置き方
+//   one    : 先頭の行の真ん中に1個。三角形が端に届く前に置き直す（90・150 はフラクタル、30 はカオスの三角形）
+//   random : 先頭の行にランダムにばらまく。置き直すのは始めたときと向きが変わったときだけ（110 は粒が走る）。
+//            行の両端はつなげる（端を 0 で閉じると、1 が端から抜けていくルールでは、しばらくすると何もなくなる）
+// ルール18 は、種が1個だと 90 とまったく同じ模様になるので外した。縞のルール184 は不採用
+export const PAT_RULES = { 30: 'one', 90: 'one', 110: 'random', 150: 'one' };
+
+/**
+ * 実験：模様のレイヤー。写真のタイルを運ぶ CA とは別に、2状態（0/1）の基本セルオートマトンを重ねる。
+ * 先頭の行だけが時間とともにルールで変化し、下流の行はそのまま運ぶ → 領域の中を時空図（kivi の静止画と同じもの）がスクロールする。
+ * 種の置き方はルールごと（PAT_RULES）。真ん中に1個のときは、三角形が領域の端に届く前（領域の幅の 0.3〜0.5倍の回数だけ進んだら）に
+ * 置き直す。端に届くと壁で跳ね返って模様が埋まり、市松模様のかたまりになってしまうため。
+ * 模様が 1 のマスは、描画で領域ごとの1枚のタイルに置き換わる（CA の状態・タイルには影響しない）。乱数は使わずハッシュ
+ */
+function stepPattern(g, sim, pm, nm, start, di, dt, lineLen, lineCount, turned) {
+  const P = sim.P;
+  const on = g.patU < P.patFrac && lineLen >= P.patMinWidth && g.patRule > 0;
+  const zero = (t0) => { for (let t = t0; t < lineCount; t++) for (let i = 0; i < lineLen; i++) nm[start + t * dt + i * di] = 0; };
+  if (!on) { zero(0); g.patT = 0; return; }
+  const period = Math.max(12, Math.round(lineLen * (0.3 + 0.2 * g.patV)));
+  if (turned || g.patReset) { zero(1); g.patT = 0; g.patReset = false; } // 向き・ルールが変わったら、古い模様は捨てる
+  else for (let t = lineCount - 1; t >= 1; t--) for (let i = 0; i < lineLen; i++) nm[start + t * dt + i * di] = pm[start + (t - 1) * dt + i * di];
+  const rule = g.patRule, mid = Math.floor(lineLen / 2), one = PAT_RULES[rule] === 'one';
+  const reseed = one ? g.patT % period === 0 : g.patT === 0;
+  for (let i = 0; i < lineLen; i++) {
+    const u = start + i * di;
+    if (reseed) { nm[u] = one ? (i === mid ? 1 : 0) : hash(P.seed, g.index, g.lastDir, i) & 1; continue; }
+    const L = i > 0 ? pm[u - di] : one ? 0 : pm[start + (lineLen - 1) * di];
+    const R = i < lineLen - 1 ? pm[u + di] : one ? 0 : pm[start];
+    nm[u] = (rule >> ((L << 2) | (pm[u] << 1) | R)) & 1;
+  }
+  g.patT++;
 }
 
 /**
