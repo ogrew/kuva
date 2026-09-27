@@ -23,7 +23,7 @@ const CONFIG = {
   holdMax: 200,           // A：変形が終わってから次の変形までの最大世代数（即時反映）
   morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
   morphMax: 500,          // A：〃 最長（即時反映）
-  inject: false,          // C：写真を流し込む（即時反映。流れるのときだけ効く）
+  inject: true,           // C：写真を流し込む（即時反映。流れるのときだけ効く）
   injectPeriod: 200,      // C：流し込みの周期（世代）（即時反映）
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
