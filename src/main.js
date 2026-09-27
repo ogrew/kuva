@@ -37,14 +37,24 @@ const FLAVORS = {
   'morph+region': { ruleMorph: true,  regionRules: true },
 };
 // マスの高さ比率の段階（高さ = 幅 × p）。kivi と同じ
-const CELL_MIN = 12, CELL_MAX = 128; // cellSize の範囲（px）
+// cellSize の範囲は写真の短辺に対する割合で決める（写真が変わると範囲も変わる）
+//   最小：短辺の 0.5%（短辺が約200マス。写真の大きさに関係なくマスの数が一定になり、重さも一定）
+//   最大：短辺の 12.5%（短辺が8マス。これより粗いと領域に分けたときに CA らしさが出にくい）
+const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = 0.125, CELL_MIN_PX = 4;
+const cellRange = () => {
+  if (!bitmap) return { min: 12, max: 128 };
+  const s = Math.min(bitmap.width, bitmap.height);
+  const min = Math.max(CELL_MIN_PX, Math.round(s * CELL_MIN_FRAC));
+  return { min, max: Math.max(min + 1, Math.round(s * CELL_MAX_FRAC)) };
+};
 const ASPECTS = [
   { p: 1 / 5, label: '1/5' }, { p: 1 / 4, label: '1/4' }, { p: 1 / 3, label: '1/3' },
   { p: 1 / 2, label: '1/2' }, { p: 1, label: '1' }, { p: 2, label: '2' },
   { p: 3, label: '3' }, { p: 4, label: '4' }, { p: 5, label: '5' },
 ];
 const cellDims = () => {
-  const cw = Math.min(CELL_MAX, Math.max(CELL_MIN, Math.round(CONFIG.cellSize)));
+  const { min, max } = cellRange();
+  const cw = Math.min(max, Math.max(min, Math.round(CONFIG.cellSize)));
   const a = ASPECTS[Math.round(CONFIG.cellAspect)] || ASPECTS[4];
   return { cw, ch: Math.max(2, Math.round(cw * a.p)), label: a.label };
 };
@@ -100,6 +110,8 @@ async function loadImage(blob, name, seq = ++loadSeq, done = '') {
     if (seq !== loadSeq) return;
     bitmap = bm;
     imgName = name;
+    updateCellRange();
+    aspectName();
     rebuild();
     if (done) status = done;
   } catch (e) {
@@ -194,11 +206,22 @@ mon('image', '写真');
 // 基本
 const f1 = pane.addFolder({ title: '基本' });
 onRebuild(num(f1, 'seed', 'seed', 0, 999999, 1));
-const cCell = num(f1, 'cellSize', 'cellSize (幅px)', CELL_MIN, CELL_MAX, 1);
+let cCell = null;
+// cellSize のスライダーを今の写真の範囲で作り直す（Tweakpane はあとから min・max を変えられないので、同じ位置に作り直す）。
+// 範囲の外にある値は範囲内に寄せる
+function updateCellRange() {
+  const { min, max } = cellRange();
+  CONFIG.cellSize = Math.min(max, Math.max(min, Math.round(CONFIG.cellSize)));
+  let index;
+  if (cCell) { index = f1.children.indexOf(cCell); cCell.dispose(); }
+  cCell = f1.addBinding(CONFIG, 'cellSize', { label: `cellSize (幅px ${min}〜${max})`, min, max, step: 1, index });
+  onRebuild(cCell, () => aspectName()); // aspectName はこの下で定義される
+  tip(cCell, '写真の短辺の 0.5%〜12.5% の範囲。写真を入れ替えると範囲も変わります');
+}
+updateCellRange();
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
 const cAspect = num(f1, 'cellAspect', '', 0, ASPECTS.length - 1, 1);
 const aspectName = () => { const d = cellDims(); cAspect.label = `高さ比 ×${d.label}（${d.cw}×${d.ch}px）`; };
-onRebuild(cCell, aspectName);
 onRebuild(cAspect, aspectName);
 aspectName();
 onRebuild(num(f1, 'K', 'K (色数)', 2, 12, 1));
@@ -333,7 +356,7 @@ const q = new URLSearchParams(location.search).get('img');
 if (q) loadURL(q, q.split('/').pop());
 else if (SAMPLES.length) {
   const s = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
-  loadURL(s.url, s.name, 'サンプル画像（ドロップで入れ替え）');
+  loadURL(s.url, s.name, 'サンプル（D&Dで変更）');
 }
 
 requestAnimationFrame(frame);
