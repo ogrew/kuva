@@ -40,7 +40,7 @@ export const ENGINE_DEFAULTS = {
   tempoSlow: 4,        // 〃 最遅
   tempoHoldMin: 100, tempoHoldMax: 500, // テンポを引き直す間隔（世代）
   dirChangeProb: 0.3,  // テンポを引き直すとき、流れる向きも変える確率
-  patFrac: 0,          // 実験：模様のレイヤーを重ねる領域の割合（0 = なし）
+  patFrac: 0,          // 模様のレイヤーを重ねる領域の割合（0 = なし。GUI の初期値は main.js）
   patMinWidth: 24,     // 模様を重ねる領域の、行の長さ（マス）の最小。小さいと三角形が育たない
   patRules: [30, 90, 110, 150], // 模様に使うルール（PAT_RULES の番号）。領域ごとにこの中からハッシュで1つ選ぶ
   direction: 'all',    // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'。固定中は E の向き変更も効かない
@@ -74,7 +74,7 @@ export class Simulation {
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
     this.regions = subdivide(P, cols, rows, rng, io.cw ?? 1, io.ch ?? 1).map(([x, y, w, h], r) => {
       const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
-      // 模様のレイヤー（実験）：選ばれやすさ・置き直しの間隔・ルール。乱数は使わずハッシュ
+      // 模様のレイヤー：選ばれやすさ・置き直しの間隔・ルール。乱数は使わずハッシュ
       g.patU = hash(P.seed, r, 0x706174) / 4294967296;
       g.patV = hash(P.seed, r, 0x70657231) / 4294967296;
       g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;

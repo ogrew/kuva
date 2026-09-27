@@ -28,7 +28,7 @@ const CONFIG = {
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
   tempoSlow: 4,           // E：〃 最遅
-  // ---- 実験（見比べ用）----
+  // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
@@ -301,9 +301,9 @@ onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
 
-// 実験（見比べ用）
-const fe = pane.addFolder({ title: '実験' });
-const cPat = num(fe, 'patFrac', '模様の領域の割合', 0, 1, 0.01);
+// 模様（基本セルオートマトンの模様を重ねる）
+const fe = pane.addFolder({ title: '模様' });
+const cPat = num(fe, 'patFrac', '重ねる領域の割合', 0, 1, 0.01);
 onLive(cPat, 'patFrac');
 tip(cPat, 'この割合の領域（行の長さが24マス以上）に、基本セルオートマトンの模様を重ねる。模様は領域ごとに1枚の写真タイルで描く。使うルールは下のチェックボックスで選ぶ');
 // 模様に使うルール：ルールごとのチェックボックス。各領域は ON のルールの中から1つ選ぶ
