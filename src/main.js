@@ -337,7 +337,7 @@ pane.addBlade({ view: 'separator' });
 {
   const keys = document.createElement('dl');
   keys.className = 'keys';
-  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI']]) {
+  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG']]) {
     keys.insertAdjacentHTML('beforeend', `<dt>${k}</dt><dd>${v}</dd>`);
   }
   // パネルの中身の入れ物に入れる（タイトルを押して畳んだときに一緒に隠れるように）
@@ -348,6 +348,24 @@ function newSeed() {
   CONFIG.seed = Math.floor(Math.random() * 1e6);
   guiSync();
   rebuild();
+}
+
+// PNG 書き出し：今の世代を、元写真の範囲・写真テクスチャと同じ解像度で（画面の余白・切り取りには関係しない）
+// 乱数も step() も使わないので、書き出しても映像は変わらない
+function savePNG() {
+  if (!sim) return;
+  const gen = sim.gen, seed = sim.P.seed;
+  const cv = renderer.snapshot();
+  if (!cv) return;
+  cv.toBlob((blob) => {
+    if (!blob) { status = 'PNG を書き出せませんでした'; return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `kuva_s${seed}_g${String(gen).padStart(6, '0')}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    status = `書き出し ${a.download}（${cv.width}×${cv.height}）`;
+  }, 'image/png');
 }
 
 function togglePlay() { setPlaying(!playing); }
@@ -393,6 +411,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'h') toggleUI();
   else if (k === 'n') newSeed();
   else if (k === 'r') rebuild();
+  else if (k === 's') savePNG();
 });
 
 // ---------- D&D ----------
