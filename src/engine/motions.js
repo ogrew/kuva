@@ -1,6 +1,7 @@
 // motions.js — 領域の「動き方」
 // 各動き方は init(region, sim) と step(region, sim, prev, next)、必要なら rulesChanged(region) を持つ。
-//   prev / next = { state, src }（前の世代 / 次の世代。領域のセルだけ読み書きする）
+//   prev / next = { state, src }（前の世代 / 次の世代。書き込みは領域内だけ）
+//   漏れの読み取りだけは sim.boundary（世代開始時の写し）から領域外を参照する。
 // 乱数は region.rng（領域ごとに独立した系列）だけを使い、1世代あたりの消費量を一定にする。
 // → 他の領域の有無や、動き方の中身に関係なく、領域ごとの乱数列がずれない。
 import { hash } from './rng.js';
@@ -102,6 +103,18 @@ function stepLines(g, sim, prev, next, flow) {
     const raw = t <= j;
     for (let i = 0, c = start + t * dt; i < lineLen; i++, c += di) {
       const u = c - up;
+      // 上流の境界を部分的に開く。4セルの帯を24世代保ち、点状のちらつきを避ける。
+      // 写真を復元している最中は写真を優先する。画面外にはつながない。
+      if (flow && t === 0 && !raw && sim.P.leakEnabled && sim.P.leak > 0) {
+        const outside = dir === 0 ? y > 0 : dir === 1 ? y + h < sim.rows : dir === 2 ? x > 0 : x + w < cols;
+        const open = hash(sim.P.seed, g.index, Math.floor(i / 4), Math.floor(sim.gen / 24)) / 4294967296 < sim.P.leak;
+        if (outside && open) {
+          const n = c - dt;
+          ns[c] = sim.boundary.state[n]; nr[c] = sim.boundary.src[n];
+          hist[ns[c]]++;
+          continue;
+        }
+      }
       if (raw) {
         const o = photo ? cls[u] : ps[u];
         ns[c] = o; nr[c] = photo ? u : pr[u];

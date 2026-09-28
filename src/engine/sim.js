@@ -3,6 +3,7 @@
 import { mulberry32, hash } from './rng.js';
 import { analyze } from './analyze.js';
 import { makeRulePool, applyChaos } from './rules.js';
+import { evolveRegions } from './topology.js';
 import { subdivide } from './regions.js';
 import { MOTIONS, PAT_RULES } from './motions.js';
 
@@ -52,6 +53,10 @@ export const ENGINE_DEFAULTS = {
   minRegionFrac: 0.04,
   splitMin: 0.25, splitMax: 0.75,
   skipProb: 0.1,       // 領域を CA 処理しない確率（元写真がそのまま残る）
+  topology: false,    // 局所的な分裂・合体
+  topologyInterval: 48, // 間隔の中心値（世代）。実際は0.5〜1.5倍
+  leakEnabled: false, // 隣からの漏れ
+  leak: 0.6,          // 流れの入口を隣の領域へ開く割合
   motion: 'flow',
 };
 
@@ -73,25 +78,14 @@ export class Simulation {
     this.pool = makeRulePool(P.K, P.ruleCount, P.pull, rng);
 
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
-    this.regions = subdivide(P, cols, rows, rng, io.cw ?? 1, io.ch ?? 1).map(([x, y, w, h], r) => {
-      const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
-      // 模様のレイヤー：選ばれやすさ・置き直しの間隔・ルール。乱数は使わずハッシュ
-      g.patU = hash(P.seed, r, 0x706174) / 4294967296;
-      g.patV = hash(P.seed, r, 0x70657231) / 4294967296;
-      g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;
-      g.patRule = 0;
-      // 崩れ始める世代 = startU × stagger。乱数は使わずハッシュ（待つ間は g.rng・g.trng も消費しない）
-      g.startU = hash(P.seed, r, 0x73746172) / 4294967296;
-      g.started = false;
-      g.patT = 0;
-      g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
-      MOTIONS[g.motion].init(g, this);
-      // E のテンポ用の乱数は別系列（E を切り替えても、他の乱数の流れは変わらない）
-      g.trng = mulberry32(hash(P.seed, r, 0x74656D70));
-      g.tempoPhase = Math.floor(g.trng() * 12);
-      this.retime(g, false);
-      return g;
-    });
+    this.cw = io.cw ?? 1; this.ch = io.ch ?? 1;
+    this.regions = subdivide(P, cols, rows, rng, this.cw, this.ch)
+      .map(([x, y, w, h], r) => this.createRegion(x, y, w, h, r));
+    this.nextRegionId = this.regions.length;
+    this.maxRegions = Math.max(16, this.regions.length * 2);
+    this.topologyEvents = { split: 0, merge: 0 };
+    this.topologyTick = 0;
+    this.topologyWait = Math.max(1, Math.round(P.topologyInterval / 2));
 
     // 前の世代 / 次の世代。0世代は元写真そのもの（状態 = cls、タイル = 自分自身）
     const mk = () => ({ state: this.cls.slice(), src: Int32Array.from({ length: N }, (_, i) => i), mask: new Uint8Array(N) });
@@ -105,6 +99,27 @@ export class Simulation {
     this.set('patRules', P.patRules);
   }
 
+  // 初期領域と新しく生まれた領域で同じ初期化を使う。IDごとに独立した乱数。
+  createRegion(x, y, w, h, r) {
+    const P = this.P;
+    const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
+    // 模様のレイヤー：選ばれやすさ・置き直しの間隔・ルール。乱数は使わずハッシュ
+    g.patU = hash(P.seed, r, 0x706174) / 4294967296;
+    g.patV = hash(P.seed, r, 0x70657231) / 4294967296;
+    g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;
+    g.patRule = 0;
+    g.startU = hash(P.seed, r, 0x73746172) / 4294967296;
+    g.started = false;
+    g.patT = 0;
+    g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
+    MOTIONS[g.motion].init(g, this);
+    // E のテンポ用の乱数は別系列（E を切り替えても、他の乱数の流れは変わらない）
+    g.trng = mulberry32(hash(P.seed, r, 0x74656D70));
+    g.tempoPhase = Math.floor(g.trng() * 12);
+    this.retime(g, false);
+    return g;
+  }
+
   // 次の世代から反映される
   setChaos(chaos) {
     this.P.chaos = chaos;
@@ -116,9 +131,14 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger', 'topology', 'topologyInterval', 'leakEnabled', 'leak'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
+    if (key === 'topologyInterval') {
+      if (!Number.isFinite(value) || value < 1) throw new Error('変化の間隔は1以上の数値にしてください');
+      // 待ち時間の進捗を保ち、新しい間隔をすぐ反映する。
+      this.topologyWait = Math.max(1, Math.ceil(this.topologyWait * value / this.P.topologyInterval));
+    }
     if (key === 'chaos') this.setChaos(value);
     else this.P[key] = value;
     if (key === 'patRules') {
@@ -154,6 +174,13 @@ export class Simulation {
   }
 
   step() {
+    if (this.P.topology) evolveRegions(this);
+    // ×2 の途中結果は cur に書き戻されるため、領域外は世代開始時の写しだけ読む。
+    if (this.P.leakEnabled && this.P.leak > 0) {
+      this.boundary ??= { state: new Uint8Array(this.cur.state.length), src: new Int32Array(this.cur.src.length) };
+      this.boundary.state.set(this.cur.state);
+      this.boundary.src.set(this.cur.src);
+    }
     for (const g of this.regions) {
       const m = MOTIONS[g.motion];
       // 崩れ始める前は元写真のまま待つ。一度始まった領域は、stagger をあとで上げても止まらない
@@ -165,7 +192,7 @@ export class Simulation {
       if (--g.tempoLeft <= 0) this.retime(g);
       const rate = TEMPOS[g.level];
       if (rate >= 1) {
-        // 1世代に rate 回進む。領域は自分のセルしか読まないので、途中の結果を cur に書き戻して続けてよい
+        // 1世代に rate 回進む。領域外の読み取りは boundary に固定し、領域内の途中結果だけ cur に書き戻す
         for (let k = 0; k < rate; k++) {
           if (k > 0) MOTIONS.still.step(g, this, this.nxt, this.cur);
           m.step(g, this, this.cur, this.nxt);

@@ -26,6 +26,10 @@ const CONFIG = {
   morphMax: 500,          // A：〃 最長（即時反映）
   inject: true,           // C：写真を流し込む（即時反映。流れるのときだけ効く）
   injectPeriod: 200,      // C：流し込みの周期（世代）（即時反映）
+  topology: false,        // 領域の分裂・合体
+  topologyInterval: 48,   // 変化の間隔の中心値（世代）
+  leakEnabled: false,     // 隣からの漏れ
+  leak: 0.6,              // 境界の開放率（OFFでも保持）
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
   tempoSlow: 4,           // E：〃 最遅
@@ -107,18 +111,23 @@ function rebuild() {
   const photo = k < 1 ? scaledCanvas(padded, Math.round(g.GW * k), Math.round(g.GH * k)) : padded;
   renderer.setPhoto(g, photo);
   showSim();
-  updateFlat();
   acc = 0;
   status = `Built in ${Math.round(performance.now() - t0)} ms`;
 }
 
 // 今の世代を描画に渡す（模様のレイヤーを重ねたタイル番号）
-const showSim = () => renderer.setSrc(sim.displaySrc());
+let flatRegions = null;
+const showSim = () => {
+  renderer.setSrc(sim.displaySrc());
+  // 分裂・合体で領域が変わったときだけ、2色塗りの領域マップを更新する。
+  if (flatRegions !== sim.regions) updateFlat();
+};
 
 // 塗りつぶしの色を作り直して描画に渡す（描画だけに効くので、作り直しは不要）
 let halves = null; // タイルごとの半分ずつの平均色（2色塗り用。写真・グリッドが変わったときに作り直す）
 function updateFlat() {
   if (!sim) return;
+  flatRegions = sim.regions;
   if (!(CONFIG.flatRatio > 0)) { renderer.setFlat(null); return; }
   renderer.setFlat(flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, halves), splitKinds(sim, halves, CONFIG.flatSplit));
 }
@@ -282,7 +291,7 @@ tip(onRebuild(num(f1, 'K', 'Colors', 2, 12, 1)), 'Number of states (K). Cells ar
 
 // Motion（動き方と速さ）
 const f2 = pane.addFolder({ title: 'Motion' });
-tip(onRebuild(list(f2, 'motion', 'Motion', { 'Flow': 'flow', 'In place': 'ca' })),
+tip(onRebuild(list(f2, 'motion', 'Motion', { 'Flow': 'flow', 'In place': 'ca' }), () => refreshFx()),
   'Flow: the space-time diagram flows through each region\nIn place: each row changes in place as a 1D CA (for comparison)');
 const cDir = list(f2, 'direction', 'Direction', { 'All': 'all', 'Down': 'down', 'Up': 'up', 'Right': 'right', 'Left': 'left' });
 onLive(cDir, 'direction');
@@ -336,14 +345,29 @@ const tempoName = () => {
 };
 cTempoRange.forEach((c) => onLive(c, c.key, tempoName));
 tempoName();
+const cTopology = fx.addBinding(CONFIG, 'topology', { label: 'Split / merge' });
+const cTopologyInterval = num(fx, 'topologyInterval', '　└ Interval', 12, 600, 1);
+onLive(cTopologyInterval, 'topologyInterval');
+tip(cTopology, 'Split or merge local regions, preserving photo tiles while changing boundaries and rules. Off freezes the current layout; R restores the initial layout');
+tip(cTopologyInterval, 'Generations between local changes (12–600). Varies from 0.5 to 1.5 times this value: 48 means 24–72 generations. Changes also scale the remaining wait');
+const cLeakEnabled = fx.addBinding(CONFIG, 'leakEnabled', { label: 'Region leak' });
+const cLeak = num(fx, 'leak', '　└ Amount', 0, 1, 0.05);
+onLive(cLeak, 'leak');
+tip(cLeakEnabled, 'Flow only. Takes in tiles from neighboring regions. Off retains the amount; tiles already carried in remain');
+tip(cLeak, 'Share of the upstream edge open to neighbors. 0 = closed, 1 = fully open. Reinject takes priority; screen edges stay closed');
 const refreshFx = () => {
   cMorph.forEach((c) => { c.hidden = !FLAVORS[CONFIG.flavor].ruleMorph; });
   cPeriod.hidden = !CONFIG.inject;
+  cTopologyInterval.hidden = !CONFIG.topology;
+  cLeakEnabled.hidden = CONFIG.motion !== 'flow';
+  cLeak.hidden = CONFIG.motion !== 'flow' || !CONFIG.leakEnabled;
   cTempoRange.forEach((c) => { c.hidden = !CONFIG.tempo; });
 };
 onRebuild(cFlavor, refreshFx);
 onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
+onLive(cTopology, 'topology', refreshFx);
+onLive(cLeakEnabled, 'leakEnabled', refreshFx);
 refreshFx();
 const cStagger = num(fx, 'stagger', 'Stagger', 0, 400, 1);
 onLive(cStagger, 'stagger');
