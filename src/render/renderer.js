@@ -1,9 +1,12 @@
 // renderer.js — WebGL2 描画
-// テクスチャは3枚：
+// テクスチャは4枚：
 //   写真：パディング済みグリッド全体の画像
 //   src ：cols×rows の R32I。セルごとに「描く写真タイルの番号」（毎世代更新）
-//   flat：cols×rows の RGBA8。タイルごとの塗りつぶしの色（A = 255 なら塗る）
+//   flat：cols×rows×9層の RGBA8 配列。タイルごとの塗りつぶしの色（0層目の A = 255 なら塗る）。1〜8層目は2色塗りの半分ずつの色
+//   kind：cols×rows の R8UI。描く位置ごとの2色塗りの割り方（0 = 1色、1 = 横、2 = 縦、3 = ＼、4 = ／）
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
+
+import { FLAT_LAYERS } from '../engine/flat.js';
 
 const VS = `#version 300 es
 void main() {
@@ -18,7 +21,8 @@ precision highp int;
 precision highp isampler2D;
 uniform sampler2D uPhoto;
 uniform isampler2D uSrc;
-uniform sampler2D uFlat;
+uniform highp sampler2DArray uFlat;
+uniform highp usampler2D uKind;
 uniform bool uFlatOn;
 uniform int uCols;
 uniform vec2 uGrid;     // (cols, rows)
@@ -33,6 +37,10 @@ out vec4 outColor;
 void main() {
   vec2 p = vec2(gl_FragCoord.x, uCanvasH - gl_FragCoord.y);
   vec2 g = uOff + p * uScale;
+  // ミップマップの段は、マス境界で飛ばない連続な座標から決める（境界に線が出ないように）。
+  // g は画面の位置の一次式なので、微分は uScale そのもの。dFdx を使うと、隣の画素が先に return した
+  // 2×2 のまとまりで値が壊れ、塗りのマスと接する写真の画素がぼやけた色（線）になる
+  vec2 gx = vec2(uScale.x, 0.0) / uGrid, gy = vec2(0.0, uScale.y) / uGrid;
   if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
   int s = texelFetch(uSrc, c, 0).r;
@@ -40,15 +48,24 @@ void main() {
   vec2 sc = vec2(si);
   // 塗りつぶし：元の位置にないタイル（CA で運ばれてきたもの）だけを塗る
   if (uFlatOn && si != c) {
-    vec4 f = texelFetch(uFlat, si, 0);
-    if (f.a > 0.5) { outColor = vec4(f.rgb, 1.0); return; }
+    vec4 f = texelFetch(uFlat, ivec3(si, 0), 0);
+    if (f.a > 0.5) {
+      // 2色塗り：描く位置の領域の割り方で、マスの中のどちらの半分かを決める
+      uint k = texelFetch(uKind, c, 0).r;
+      if (k != 0u) {
+        vec2 q = fract(g);
+        int layer = k == 1u ? (q.y < 0.5 ? 1 : 2) : k == 2u ? (q.x < 0.5 ? 3 : 4)
+                  : k == 3u ? (q.x < q.y ? 5 : 6) : (q.x + q.y < 1.0 ? 7 : 8);
+        f = texelFetch(uFlat, ivec3(si, layer), 0);
+      }
+      outColor = vec4(f.rgb, 1.0); return;
+    }
   }
   // マス内の位置。隣のマスがにじまないよう、マスの内側半テクセルにクランプする
   vec2 texCell = uTexSize / uGrid;
   vec2 local = clamp(fract(g) * texCell, vec2(0.5), texCell - 0.5);
   vec2 uv = (sc * texCell + local) / uTexSize;
-  // ミップマップの段は、マス境界で飛ばない連続な座標から決める（境界に線が出ないように）
-  outColor = vec4(textureGrad(uPhoto, uv, dFdx(g) / uGrid, dFdy(g) / uGrid).rgb, 1.0);
+  outColor = vec4(textureGrad(uPhoto, uv, gx, gy).rgb, 1.0);
 }`;
 
 export class Renderer {
@@ -70,9 +87,9 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog;
     this.u = {};
-    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uFlatOn', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
     this.vao = gl.createVertexArray();
-    this.photoTex = null; this.srcTex = null; this.flatTex = null; this.flatOn = false; this.grid = null;
+    this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.flatOn = false; this.grid = null;
   }
 
   // 写真テクスチャの長辺の上限
@@ -84,6 +101,7 @@ export class Renderer {
     if (this.photoTex) gl.deleteTexture(this.photoTex);
     if (this.srcTex) gl.deleteTexture(this.srcTex);
     if (this.flatTex) gl.deleteTexture(this.flatTex);
+    if (this.kindTex) gl.deleteTexture(this.kindTex);
     this.grid = layout;
     this.texSize = [photo.width, photo.height];
 
@@ -104,22 +122,30 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
     this.flatTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.flatTex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, layout.cols, layout.rows);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.flatTex);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, layout.cols, layout.rows, FLAT_LAYERS);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this.flatOn = false;
+
+    this.kindTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.kindTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8UI, layout.cols, layout.rows);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    this.flatOn = false;
 
   }
 
-  /** colors = flatColors の結果（タイルごとの RGBA）。null なら塗らない */
-  setFlat(colors) {
+  /** colors = flatColors の結果（層ごとのタイルの RGBA）、kinds = splitKinds の結果。colors が null なら塗らない */
+  setFlat(colors, kinds) {
     this.flatOn = !!colors;
     if (!colors) return;
     const gl = this.gl, { cols, rows } = this.grid;
-    gl.bindTexture(gl.TEXTURE_2D, this.flatTex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, colors);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.flatTex);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, cols, rows, FLAT_LAYERS, gl.RGBA, gl.UNSIGNED_BYTE, colors);
+    gl.bindTexture(gl.TEXTURE_2D, this.kindTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.UNSIGNED_BYTE, kinds);
   }
 
   setSrc(src) {
@@ -167,11 +193,13 @@ export class Renderer {
     gl.bindVertexArray(this.vao);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photoTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.flatTex);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.flatTex);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.kindTex);
     const u = this.u;
     gl.uniform1i(u.uPhoto, 0);
     gl.uniform1i(u.uSrc, 1);
     gl.uniform1i(u.uFlat, 2);
+    gl.uniform1i(u.uKind, 3);
     gl.uniform1i(u.uFlatOn, this.flatOn ? 1 : 0);
     gl.uniform1i(u.uCols, cols);
     gl.uniform2f(u.uGrid, cols, rows);

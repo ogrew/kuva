@@ -2,7 +2,7 @@
 import { Pane } from 'tweakpane';
 import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
 import { PAT_RULES } from './engine/motions.js';
-import { flatColors } from './engine/flat.js';
+import { flatColors, tileHalves, splitKinds } from './engine/flat.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
 import { Renderer } from './render/renderer.js';
 
@@ -18,6 +18,7 @@ const CONFIG = {
   flatRatio: 0,   // 塗りつぶし：元の位置にないタイルのうち、一色で塗る割合（0 = 塗らない。即時反映）
   flatUnit: 'tile', // 塗り方 'tile'（マスごと） | 'state'（似た色ごと）
   flatColor: 'palette', // 塗りの色 'palette'（代表色） | 'mean'（平均色）
+  flatSplit: 0,   // 2色塗りにする領域の割合。割り方（横・縦・斜め）は領域の写真から決める（0 = なし。即時反映）
   // ---- 変化（時間とともに映像を変える仕組み）----
   flavor: 'morph',        // ルールの味付け（FLAVORS）。変えると最初から作り直し
   holdMax: 200,           // A：変形が終わってから次の変形までの最大世代数（即時反映）
@@ -96,7 +97,9 @@ function rebuild() {
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * Ax, g.rows * Ay)), stride: g.cols * Ax };
   const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, ...FLAVORS[CONFIG.flavor] };
   for (const k of Simulation.LIVE) P[k] = CONFIG[k];
-  sim = new Simulation(P, { cols: g.cols, rows: g.rows, Ax, Ay, analysis, cw, ch });
+  const io = { cols: g.cols, rows: g.rows, Ax, Ay, analysis, cw, ch };
+  sim = new Simulation(P, io);
+  halves = tileHalves(io);
 
   // 写真テクスチャは長辺を上限まで縮小する
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
@@ -112,9 +115,11 @@ function rebuild() {
 const showSim = () => renderer.setSrc(sim.displaySrc());
 
 // 塗りつぶしの色を作り直して描画に渡す（描画だけに効くので、作り直しは不要）
+let halves = null; // タイルごとの半分ずつの平均色（2色塗り用。写真・グリッドが変わったときに作り直す）
 function updateFlat() {
   if (!sim) return;
-  renderer.setFlat(CONFIG.flatRatio > 0 ? flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor) : null);
+  if (!(CONFIG.flatRatio > 0)) { renderer.setFlat(null); return; }
+  renderer.setFlat(flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, halves), splitKinds(sim, halves, CONFIG.flatSplit));
 }
 
 // 読み込みの順番。読み込み中に別の写真がドロップされたら、古いほうの結果は捨てる
@@ -270,10 +275,12 @@ const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.01);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
   list(f3, 'flatColor', '　└ Color', { 'Palette': 'palette', 'Mean': 'mean' }),
+  num(f3, 'flatSplit', '　└ Split', 0, 1, 0.01),
 ];
 tip(cFlat, 'Share of carried cells (photo tiles away from their original place) painted in a flat color instead. 0 = off');
 tip(cFlatSub[0], 'Per tile: decide for each photo tile\nPer color: paint all tiles of the same K color together');
 tip(cFlatSub[1], 'Palette: the K color the tile belongs to\nMean: the tile\'s own average color');
+tip(cFlatSub[2], 'Share of regions painted in two colors: each tile is halved and each half gets its own color. The cut (horizontal, vertical or either diagonal) is picked per region to fit the photo. 0 = off');
 const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRatio > 0); });
 [cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));
 refreshFlat();
