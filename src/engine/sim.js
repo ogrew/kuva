@@ -43,6 +43,7 @@ export const ENGINE_DEFAULTS = {
   patFrac: 0,          // 模様のレイヤーを重ねる領域の割合（0 = なし。GUI の初期値は main.js）
   patMinWidth: 24,     // 模様を重ねる領域の、行の長さ（マス）の最小。小さいと三角形が育たない
   patRules: [30, 90, 110, 150], // 模様に使うルール（PAT_RULES の番号）。領域ごとにこの中からハッシュで1つ選ぶ
+  stagger: 0,          // 領域が崩れ始める世代のばらつき。領域ごとに 0〜stagger 世代目まで元写真のまま待つ（0 = 一斉に始まる）
   direction: 'all',    // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'。固定中は E の向き変更も効かない
   // 領域
   maxDepth: 7,
@@ -79,6 +80,9 @@ export class Simulation {
       g.patV = hash(P.seed, r, 0x70657231) / 4294967296;
       g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;
       g.patRule = 0;
+      // 崩れ始める世代 = startU × stagger。乱数は使わずハッシュ（待つ間は g.rng・g.trng も消費しない）
+      g.startU = hash(P.seed, r, 0x73746172) / 4294967296;
+      g.started = false;
       g.patT = 0;
       g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
       MOTIONS[g.motion].init(g, this);
@@ -112,7 +116,7 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'chaos') this.setChaos(value);
@@ -152,6 +156,11 @@ export class Simulation {
   step() {
     for (const g of this.regions) {
       const m = MOTIONS[g.motion];
+      // 崩れ始める前は元写真のまま待つ。一度始まった領域は、stagger をあとで上げても止まらない
+      if (!g.started) {
+        if (this.gen < Math.floor(g.startU * this.P.stagger)) { MOTIONS.still.step(g, this, this.cur, this.nxt); continue; }
+        g.started = true;
+      }
       if (!this.P.tempo || g.motion === 'still') { m.step(g, this, this.cur, this.nxt); continue; }
       if (--g.tempoLeft <= 0) this.retime(g);
       const rate = TEMPOS[g.level];

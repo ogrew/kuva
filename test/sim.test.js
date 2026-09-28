@@ -154,3 +154,47 @@ test('E：×2 の領域は、×1 で2世代進めたのと同じになる', () =
   for (let i = 0; i < 50; i++) { a.step(); b.step(); b.step(); }
   assert.deepEqual(a.src, b.src);
 });
+
+// 領域 g のセルの src を並べたもの
+const regionSrc = (s, g) => {
+  const out = [];
+  for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) out.push(s.src[y * s.cols + x]);
+  return out;
+};
+
+test('Stagger：崩れ始める世代までは元写真のまま、始まってからは遅れて始まるだけで同じ崩れ方', () => {
+  const P = { seed: 11, K: 6, chaos: 0.1 }, stagger = 120, n = 40;
+  const a = new Simulation({ ...P, stagger }, fakeIO(80, 60)), b = new Simulation(P, fakeIO(80, 60));
+  const starts = a.regions.map((g) => Math.floor(g.startU * stagger));
+  const later = Math.max(...starts);
+  assert.ok(later > 0);
+  const aAt = [], bAt = [];
+  for (let i = 0; i <= later + n; i++) {
+    aAt.push(a.regions.map((g) => regionSrc(a, g)));
+    if (i <= n) bAt.push(b.regions.map((g) => regionSrc(b, g)));
+    a.step(); if (i < n) b.step();
+  }
+  a.regions.forEach((g, r) => {
+    const own = [];
+    for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) own.push(y * a.cols + x);
+    assert.deepEqual(aAt[starts[r]][r], own, `領域 ${r} は開始までは元写真`);
+    // 領域は自分のセルしか読まないので、開始から n 世代後は stagger なしの n 世代後と同じ
+    assert.deepEqual(aAt[starts[r] + n][r], bAt[n][r], `領域 ${r} は遅れて始まるだけ`);
+  });
+});
+
+test('Stagger：途中で変えても決定的で、始まった領域は止まらない', () => {
+  const go = () => {
+    const s = new Simulation({ seed: 12, K: 7, chaos: 0.1, stagger: 200 }, fakeIO(80, 60));
+    for (let i = 0; i < 300; i++) { if (i === 50) s.set('stagger', 400); if (i === 120) s.set('stagger', 0); s.step(); }
+    return s;
+  };
+  assert.deepEqual(go().src, go().src);
+  const s = new Simulation({ seed: 12, K: 7, chaos: 0.1, stagger: 100 }, fakeIO(80, 60));
+  for (let i = 0; i < 100; i++) s.step();
+  const started = s.regions.filter((g) => g.started).map((g) => g.index);
+  s.set('stagger', 400);
+  for (let i = 0; i < 5; i++) s.step();
+  assert.ok(started.length > 0);
+  assert.ok(started.every((r) => s.regions[r].started));
+});

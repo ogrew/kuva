@@ -29,6 +29,7 @@ const CONFIG = {
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
   tempoSlow: 4,           // E：〃 最遅
+  stagger: 200,           // 領域が崩れ始める世代のばらつき（0〜400。0 = 一斉に始まる。即時反映）
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
@@ -323,6 +324,9 @@ onRebuild(cFlavor, refreshFx);
 onLive(cInject, 'inject', refreshFx);
 onLive(cTempo, 'tempo', refreshFx);
 refreshFx();
+const cStagger = num(fx, 'stagger', 'Stagger', 0, 400, 1);
+onLive(cStagger, 'stagger');
+tip(cStagger, 'Each region stays as the photo until a generation between 0 and this value, then starts to break up. 0 = all regions start together. Changing it only affects regions that have not started yet');
 
 // Pattern（基本セルオートマトンの模様を重ねる）
 const fe = pane.addFolder({ title: 'Pattern' });
