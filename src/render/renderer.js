@@ -33,6 +33,10 @@ out vec4 outColor;
 void main() {
   vec2 p = vec2(gl_FragCoord.x, uCanvasH - gl_FragCoord.y);
   vec2 g = uOff + p * uScale;
+  // ミップマップの段は、マス境界で飛ばない連続な座標から決める（境界に線が出ないように）。
+  // g は画面の位置の一次式なので、微分は uScale そのもの。dFdx を使うと、隣の画素が先に return した
+  // 2×2 のまとまりで値が壊れ、塗りのマスと接する写真の画素がぼやけた色（線）になる
+  vec2 gx = vec2(uScale.x, 0.0) / uGrid, gy = vec2(0.0, uScale.y) / uGrid;
   if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
   int s = texelFetch(uSrc, c, 0).r;
@@ -47,8 +51,7 @@ void main() {
   vec2 texCell = uTexSize / uGrid;
   vec2 local = clamp(fract(g) * texCell, vec2(0.5), texCell - 0.5);
   vec2 uv = (sc * texCell + local) / uTexSize;
-  // ミップマップの段は、マス境界で飛ばない連続な座標から決める（境界に線が出ないように）
-  outColor = vec4(textureGrad(uPhoto, uv, dFdx(g) / uGrid, dFdy(g) / uGrid).rgb, 1.0);
+  outColor = vec4(textureGrad(uPhoto, uv, gx, gy).rgb, 1.0);
 }`;
 
 export class Renderer {
