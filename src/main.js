@@ -5,6 +5,7 @@ import { PAT_RULES } from './engine/motions.js';
 import { flatColors, tileHalves, splitKinds } from './engine/flat.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
 import { Renderer } from './render/renderer.js';
+import { RegionBorders } from './render/region-borders.js';
 
 const CONFIG = {
   seed: 12345,
@@ -37,6 +38,7 @@ const CONFIG = {
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
+  regionBorders: false, // デバッグ：白い領域境界（表示だけ、PNGには含めない）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
 // ルールの味付け → エンジンの設定
@@ -82,6 +84,7 @@ const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっく�
 
 const canvas = document.getElementById('view');
 const renderer = new Renderer(canvas);
+const borders = new RegionBorders(document.getElementById('region-borders'));
 
 let bitmap = null, imgName = '';
 let sim = null;
@@ -210,6 +213,7 @@ function frame(t) {
   if (t - rate.t >= 500) { stats.rate = (rate.n * 1000) / (t - rate.t); rate.t = t; rate.n = 0; }
 
   renderer.draw(CONFIG.fit);
+  borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit);
   updateInfo();
   requestAnimationFrame(frame);
 }
@@ -302,6 +306,8 @@ tip(num(f2, 'gps', 'Speed', 0.5, 60, 0.5), 'Generations per second'); // 再生�
 // Render（描画だけに効く。作り直し不要）
 const f3 = pane.addFolder({ title: 'Render' });
 tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
+tip(f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' }),
+  'Show region boundaries as thin white lines. Display only: not included in saved PNGs');
 const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.01);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),

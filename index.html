@@ -29,6 +29,7 @@
     /* 背景：入力写真のぼかし（写真を読み込んだときに1回だけ作る）。余白（Fit = contain）のところに見える */
     #bg { position: fixed; inset: 0; background: center / cover no-repeat; }
     #view { position: relative; display: block; width: 100vw; height: 100vh; }
+    #region-borders { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
     body.bare { cursor: none; }
 
     /* パネル（右上の設定、左下の Status） */
@@ -83,6 +84,7 @@
 <body>
   <div id="bg"></div>
   <canvas id="view"></canvas>
+  <canvas id="region-borders" aria-hidden="true" hidden></canvas>
   <aside id="ui" class="panel"></aside>
   <aside id="stat" class="panel"></aside>
   <nav id="links">
