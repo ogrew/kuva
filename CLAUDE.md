@@ -86,6 +86,8 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 - GUI のラベル・ツールチップ・状態パネルのメッセージは英語（短い名詞だけにして、単位や範囲はツールチップに書く）。コードのコメントは日本語
 - フォルダは Grid（Seed・Cell size・Aspect・Colors）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
 - パネルの先頭はタイトルバーを大きくしたヘッダー（`kuva` と `PHOTO × 1D CELLULAR AUTOMATA`、`.head`）。押すと畳めるのはそのまま。写真名・grid・seed は Status パネルにあるので、ヘッダーには出さない
+- 見た目は同じ作者の p5-hiragana-mosaic に合わせている（パネルまわりだけ）。白の半透明のパネル（`.panel` の中に Tweakpane。`--tp-*` の色は hiragana と同じ）、Space Grotesk ＋ M PLUS 1p（Google Fonts。オフラインでは別のフォントになってよい）、左下に Follow／GitHub のリンク（H で一緒に隠れる）
+- 背景は入力写真のぼかし（`#bg`）。写真を読み込んだときに1回だけ、縮小してぼかした画像を作る（`updateBackdrop`。毎フレームは描かない。`backdrop-filter` は下の映像が毎フレーム変わるので使わない）。描画は元写真の外側を透明にしているので、Fit = contain の余白にだけ見える
 - Status（状態）は左下の別パネル（`statPane`、`#stat`）。読み取り専用のモニターだけで、画面に直接文字は書かない。値は再生ループが `stats` に書き、モニターが定期的に読む
 
 ### Tweakpane（v4）の注意点（kivi と同じものが多い）
@@ -93,8 +95,8 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 - npm の `tweakpane`（4.0.5）を import する。Essentials プラグインは入れていない
 - 作り直しのスライダーは `on('change')` の `ev.last`（離した・入力を確定した）のときだけ作り直す（`onRebuild`）。即時反映は毎回 `sim.set()`（`onLive`）
 - **コードから `CONFIG` を書き換えたら `guiSync()` を呼ぶ**。`pane.refresh()` は change イベントを出すので、その間はフラグ（`guiSyncing`）で処理を止めている
-- ラベルの変更は `binding.label`、表示・非表示は `binding.hidden`、GUI 全体は `pane.hidden`
-- パネル幅は 360px（`index.html`）。Tweakpane は自分の CSS を後から入れるので、セレクタの詳細度を上げている（`html .tp-dfwv`）
+- ラベルの変更は `binding.label`、表示・非表示は `binding.hidden`。GUI 全体（パネルの入れ物 `.panel`・リンク）は `body.bare` で CSS から隠す
+- パネル幅は 360px（`index.html`）。Tweakpane は自分の CSS を後から入れるので、セレクタの詳細度を上げている（`html .tp-rotv_b.head` など）
 - キー操作は、文字入力欄・プルダウンにフォーカスがあるときだけ無視する。チェックボックスにフォーカスが残っていたら外してから処理する
 - lil-gui から移行したとき、Vite の依存キャッシュ（`node_modules/.vite`）に古いライブラリが残って真っ黒になった。依存を入れ替えたら dev サーバを再起動する
 - タブが見えなくなったら（`visibilitychange`）自動で一時停止し、見えるようになっても自動では再開しない。`blur` では止めない（2画面目に映しながら別のアプリを触ることがあるため）

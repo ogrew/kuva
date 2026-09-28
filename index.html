@@ -3,29 +3,92 @@
 <head>
   <meta charset="utf-8">
   <title>kuva</title>
+  <!-- 文字は p5-hiragana-mosaic と同じ（オフラインのときは別のフォントになる） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=M+PLUS+1p:wght@400;700&display=swap">
   <style>
-    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-    #view { display: block; width: 100vw; height: 100vh; }
-    /* 「状態」パネル（左下） */
-    #stat { position: fixed; left: 8px; bottom: 8px; width: 320px; }
+    /* 見た目は p5-hiragana-mosaic に合わせる（パネルまわりだけ。映像は画面いっぱいのまま） */
+    :root {
+      --bg-1: #222222;
+      --bg-2: #dfe6dd;
+      --ink-1: #201b16;
+      --ink-2: #5b5147;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-border: rgba(32, 27, 22, 0.12);
+      --shadow: 0 18px 40px rgba(32, 27, 22, 0.18);
+      --radius-lg: 20px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: "Space Grotesk", "M PLUS 1p", sans-serif;
+      color: var(--ink-1);
+      background: linear-gradient(135deg, var(--bg-1), var(--bg-2));
+    }
+    /* 背景：入力写真のぼかし（写真を読み込んだときに1回だけ作る）。余白（Fit = contain）のところに見える */
+    #bg { position: fixed; inset: 0; background: center / cover no-repeat; }
+    #view { position: relative; display: block; width: 100vw; height: 100vh; }
     body.bare { cursor: none; }
-    /* Tweakpane：長いラベルが切れないよう幅を広げ、画面より高いときはスクロールさせる。Tweakpane が後から入れる CSS に負けないよう html を付けている（kivi と同じ） */
-    html .tp-dfwv { width: 360px; max-height: calc(100vh - 16px); overflow-y: auto; }
-    /* パネルの先頭（タイトルバーを大きくして、名前と説明を出す） */
-    html .tp-rotv_b.head { height: auto; line-height: 1; padding: 14px 12px 12px; text-align: left; white-space: normal; }
+
+    /* パネル（右上の設定、左下の Status） */
+    .panel {
+      position: fixed; z-index: 10; width: 360px; padding: 16px;
+      border-radius: var(--radius-lg); background: var(--panel);
+      border: 1px solid var(--panel-border); box-shadow: var(--shadow);
+      --tp-base-background-color: rgba(255, 255, 255, 0.78);
+      --tp-base-shadow-color: rgba(0, 0, 0, 0.1);
+      --tp-button-background-color: #201b16;
+      --tp-button-foreground-color: #f6f1e6;
+      --tp-container-background-color: rgba(255, 255, 255, 0.65);
+      --tp-container-foreground-color: #201b16;
+      --tp-groove-foreground-color: rgba(32, 27, 22, 0.12);
+      --tp-monitor-background-color: rgba(32, 27, 22, 0.06);
+      --tp-monitor-foreground-color: #3c342b;
+      --tp-label-foreground-color: #3c342b;
+      --tp-input-background-color: rgba(255, 255, 255, 0.9);
+      --tp-input-foreground-color: #201b16;
+    }
+    /* 画面より高いときはスクロールさせる */
+    #ui { top: 16px; right: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+    /* Status はリンクの上に置く */
+    #stat { left: 20px; bottom: 70px; }
+
+    /* パネルの先頭（タイトルバーを大きくして、名前と説明を出す）。Tweakpane が後から入れる CSS に負けないよう html を付けている */
+    html .tp-rotv_b.head { height: auto; line-height: 1; padding: 2px 0 12px; text-align: left; white-space: normal;
+      background: transparent; color: var(--ink-1); font-family: "Space Grotesk", "M PLUS 1p", sans-serif; }
     html .tp-rotv_b.head .tp-rotv_t { display: block; font-size: 26px; font-weight: 700; letter-spacing: 0.02em; }
-    html .tp-rotv_b.head .sub { display: block; margin-top: 8px; font-size: 10px; letter-spacing: 0.2em; opacity: 0.6; }
-    html .tp-rotv_b.head .tp-rotv_m { top: 18px; bottom: auto; }
-    /* キー操作の一覧（パネルの一番下）。色と文字は Tweakpane に合わせる */
-    .keys { display: grid; grid-template-columns: 5em 1fr; gap: 2px 8px; margin: 0; padding: 4px 8px 8px;
-      font: 11px/1.6 var(--tp-base-font-family, monospace); color: var(--tp-label-foreground-color, #aaa); }
-    .keys dt { color: var(--tp-button-foreground-color, #ddd); }
+    html .tp-rotv_b.head .sub { display: block; margin-top: 8px; font-size: 10px; letter-spacing: 0.2em; color: var(--ink-2); }
+    html .tp-rotv_b.head .tp-rotv_m { top: 8px; bottom: auto; right: 0; }
+    /* パネルの地は外側の .panel が持つ */
+    html .panel > .tp-rotv { background: transparent; box-shadow: none; }
+    /* キー操作の一覧（パネルの一番下） */
+    .keys { display: grid; grid-template-columns: 5em 1fr; gap: 2px 8px; margin: 0; padding: 8px 4px 2px;
+      font: 11px/1.6 "Space Grotesk", "M PLUS 1p", sans-serif; letter-spacing: 0.06em; color: rgba(32, 27, 22, 0.5); }
+    .keys dt { color: var(--ink-2); font-weight: 600; }
     .keys dd { margin: 0; }
+
+    /* Follow／GitHub（左下。H で GUI と一緒に隠れる） */
+    #links { position: fixed; left: 20px; bottom: 20px; display: flex; gap: 10px; z-index: 9; }
+    #links a {
+      padding: 10px 16px; border-radius: 999px; background: rgba(255, 255, 255, 0.78);
+      color: var(--ink-1); text-decoration: none; font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em;
+      border: 1px solid rgba(32, 27, 22, 0.16); box-shadow: 0 10px 24px rgba(32, 27, 22, 0.18);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    #links a:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(32, 27, 22, 0.22); }
+    body.bare #links, body.bare .panel { display: none; }
   </style>
 </head>
 <body>
+  <div id="bg"></div>
   <canvas id="view"></canvas>
-  <div id="stat"></div>
+  <aside id="ui" class="panel"></aside>
+  <aside id="stat" class="panel"></aside>
+  <nav id="links">
+    <a href="https://x.com/dn0t_" target="_blank" rel="noopener noreferrer">Follow</a>
+    <a href="https://github.com/ogrew/kuva" target="_blank" rel="noopener noreferrer">GitHub</a>
+  </nav>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
