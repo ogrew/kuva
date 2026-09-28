@@ -123,6 +123,26 @@ function updateFlat() {
   renderer.setFlat(flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, halves), splitKinds(sim, halves, CONFIG.flatSplit));
 }
 
+// 背景：写真のぼかし。写真を読み込んだときに1回だけ、小さく縮めてぼかした画像を作る（毎フレームは描かない）
+let backdropURL = '';
+function updateBackdrop(bm) {
+  const S = 256, B = 12; // 縮小後の長辺、ぼかしの半径（px）
+  const k = S / Math.max(bm.width, bm.height);
+  const w = Math.max(1, Math.round(bm.width * k)), h = Math.max(1, Math.round(bm.height * k));
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d');
+  cx.filter = `blur(${B}px)`;
+  // 端が透けて暗くならないよう、少し大きく描いてはみ出させる
+  cx.drawImage(bm, -2 * B, -2 * B, w + 4 * B, h + 4 * B);
+  cv.toBlob((blob) => {
+    if (!blob || bitmap !== bm) return;
+    if (backdropURL) URL.revokeObjectURL(backdropURL);
+    backdropURL = URL.createObjectURL(blob);
+    document.getElementById('bg').style.backgroundImage = `url(${backdropURL})`;
+  });
+}
+
 // 読み込みの順番。読み込み中に別の写真がドロップされたら、古いほうの結果は捨てる
 let loadSeq = 0;
 async function loadImage(blob, name, seq = ++loadSeq, done = '') {
@@ -132,6 +152,7 @@ async function loadImage(blob, name, seq = ++loadSeq, done = '') {
     if (seq !== loadSeq) return;
     bitmap = bm;
     imgName = name;
+    updateBackdrop(bm);
     if (pendingCellFrac) { // 最初の写真だけ、cellSize をランダムに決める
       CONFIG.cellSize = Math.round(pendingCellFrac * Math.min(bm.width, bm.height));
       pendingCellFrac = 0;
@@ -199,7 +220,7 @@ function updateInfo() {
 }
 
 // ---------- GUI（Tweakpane v4） ----------
-const pane = new Pane({ title: 'kuva' });
+const pane = new Pane({ title: 'kuva', container: document.getElementById('ui') });
 // パネルの先頭：名前と一行の説明。タイトルバー（押すと畳める）を大きくして、説明を足す
 {
   const bar = pane.element.querySelector('.tp-rotv_b');
@@ -402,8 +423,7 @@ function toggleFullscreen() {
 
 function toggleUI() {
   uiVisible = !uiVisible;
-  pane.hidden = !uiVisible;
-  statPane.hidden = !uiVisible;
+  // パネルの入れ物（.panel）・リンクごと CSS で隠す
   document.body.classList.toggle('bare', !uiVisible);
 }
 

@@ -41,7 +41,8 @@ void main() {
   // g は画面の位置の一次式なので、微分は uScale そのもの。dFdx を使うと、隣の画素が先に return した
   // 2×2 のまとまりで値が壊れ、塗りのマスと接する写真の画素がぼやけた色（線）になる
   vec2 gx = vec2(uScale.x, 0.0) / uGrid, gy = vec2(0.0, uScale.y) / uGrid;
-  if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  // 元写真の外側（余白）は透明にして、ページの背景（写真のぼかし）を見せる
+  if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0); return; }
   ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
   int s = texelFetch(uSrc, c, 0).r;
   ivec2 si = ivec2(s % uCols, s / uCols);
@@ -70,7 +71,7 @@ void main() {
 
 export class Renderer {
   constructor(canvas) {
-    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: true });
     if (!gl) throw new Error('WebGL2 が使えません');
     this.gl = gl; this.canvas = canvas;
     this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
@@ -169,7 +170,7 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     if (!this.grid) {
       gl.viewport(0, 0, c.width, c.height);
-      gl.clearColor(0, 0, 0, 1);
+      gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       return;
     }
@@ -183,7 +184,7 @@ export class Renderer {
   drawTo(w, h, sx, sy, dx, dy) {
     const gl = this.gl;
     gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 1);
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     const { cols, rows, ox, oy, W, H, cw, ch } = this.grid;
     const scale = [1 / (sx * cw), 1 / (sy * ch)]; // 描画先 1px = グリッド何セルか
