@@ -7,6 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=M+PLUS+1p:wght@400;700&display=swap">
+  <!-- マスに重ねる数字のフォント（数字の10文字だけ読み込む） -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Orbitron:wght@700&text=0123456789&display=swap">
   <style>
     /* 見た目は p5-hiragana-mosaic に合わせる（パネルまわりだけ。映像は画面いっぱいのまま） */
     :root {
@@ -63,6 +65,14 @@
     html .tp-rotv_b.head .tp-rotv_m { top: 8px; bottom: auto; right: 0; }
     /* パネルの地は外側の .panel が持つ */
     html .panel > .tp-rotv { background: transparent; box-shadow: none; }
+    /* 数字の Show：0〜9 の切り替えを 5 個 × 2 行に並べる（チェックボックスは隠して、数字の枠の色で ON/OFF を見せる） */
+    .digit-show[hidden] { display: none; }
+    .digit-show .tp-lblv_v { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+    .digit-show label { position: relative; cursor: pointer; }
+    .digit-show input { position: absolute; opacity: 0; pointer-events: none; }
+    .digit-show span { display: block; height: 20px; line-height: 20px; text-align: center; border-radius: 2px;
+      font: 600 11px "Space Grotesk", sans-serif; background: var(--tp-input-background-color); color: rgba(32, 27, 22, 0.35); }
+    .digit-show input:checked + span { background: var(--tp-button-background-color); color: var(--tp-button-foreground-color); }
     /* キー操作の一覧（パネルの一番下） */
     .keys { display: grid; grid-template-columns: 5em 1fr; gap: 2px 8px; margin: 0; padding: 8px 4px 2px;
       font: 11px/1.6 "Space Grotesk", "M PLUS 1p", sans-serif; letter-spacing: 0.06em; color: rgba(32, 27, 22, 0.5); }
