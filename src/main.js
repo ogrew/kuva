@@ -5,7 +5,8 @@ import { PAT_RULES } from './engine/motions.js';
 import { flatColors, tileHalves, blockHalves, splitKinds } from './engine/flat.js';
 import { SCALE_LIST, blockCodes } from './engine/scale.js';
 import { tileDigits } from './engine/digits.js';
-import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
+import { loadBitmap, gridLayout, paddedCanvas, drawPadded, scaledCanvas, pixelsOf } from './image.js';
+import { Camera } from './camera.js';
 import { Renderer } from './render/renderer.js';
 import { RegionBorders } from './render/region-borders.js';
 import { DIGIT_FONTS, GLYPH_SIZE, makeGlyphs } from './render/glyphs.js';
@@ -49,6 +50,10 @@ const CONFIG = {
   digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
+  // ---- 入力（カメラ。段階1：写真テクスチャだけを毎フレーム差し替える）----
+  camera: false,    // カメラを入力にする
+  camMirror: true,  // 左右反転（自撮り向け。変えると作り直し）
+  camDevice: '',    // 使うカメラ（'' = 既定）
 };
 // ルールの味付け → エンジンの設定
 const FLAVORS = {
@@ -95,6 +100,9 @@ const renderer = new Renderer(canvas);
 const borders = new RegionBorders(document.getElementById('region-borders'));
 
 let bitmap = null, imgName = '';
+const camera = new Camera();
+let still = null;     // カメラを ON にする前の写真 { bitmap, name }（OFF にしたら戻す）
+let camFrame = null;  // カメラのフレームを毎回描くキャンバス { g, pad, out }（out = 写真テクスチャと同じ寸法）
 let sim = null;
 let playing = true;
 let acc = 0;          // 次の世代までの端数（世代単位）
@@ -103,6 +111,13 @@ let uiVisible = true;
 
 // ---------- 作り直し ----------
 function rebuild() {
+  // カメラ入力では、作り直すときのフレームを「写真」として解析する
+  if (camera.on) {
+    bitmap = camera.grab(CONFIG.camMirror);
+    imgName = 'Camera';
+    updateBackdrop(bitmap);
+  }
+  camFrame = null;
   if (!bitmap) return;
   const t0 = performance.now();
   const { cw, ch } = cellDims();
@@ -121,6 +136,12 @@ function rebuild() {
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
   const photo = k < 1 ? scaledCanvas(padded, Math.round(g.GW * k), Math.round(g.GH * k)) : padded;
   renderer.setPhoto(g, photo);
+  if (camera.on) {
+    const pad = k < 1 ? document.createElement('canvas') : null, out = document.createElement('canvas');
+    if (pad) { pad.width = g.GW; pad.height = g.GH; }
+    out.width = photo.width; out.height = photo.height;
+    camFrame = { g, pad, out };
+  }
   layers = { sim, flat: [], digits: [], halves: [halves] };
   updateDigits();
   showSim();
@@ -260,7 +281,24 @@ const SAMPLES = Object.entries(import.meta.glob('/samples/*.{png,jpg,jpeg,webp}'
 // ---------- 再生ループ ----------
 // 映像の中身は世代番号だけで決まる。壁時計は「いつ step するか」にしか使わない
 let lastT = performance.now();
-let rate = { t: lastT, n: 0 }; // 実測の世代/秒（0.5秒ごとに stats.rate を更新）
+let rate = { t: lastT, n: 0, frames: 0 }; // 実測の世代/秒（0.5秒ごとに stats.rate を更新）
+let camFps = 0; // カメラから届いたフレーム/秒
+
+// カメラの新しいフレームを写真テクスチャに送る（CA の状態は変えない。一時停止中も映像は動く）
+function updateCameraFrame() {
+  if (!camera.on || !camera.fresh || !camFrame || !bitmap) return;
+  camera.fresh = false;
+  // 途中でカメラの解像度が変わったら、そのフレームで作り直す
+  if (camera.width !== bitmap.width || camera.height !== bitmap.height) { onCameraSize(); return; }
+  const { g, pad, out } = camFrame;
+  if (pad) {
+    drawPadded(pad.getContext('2d'), camera.video, g, CONFIG.camMirror);
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(pad, 0, 0, out.width, out.height);
+  } else drawPadded(out.getContext('2d'), camera.video, g, CONFIG.camMirror);
+  renderer.updatePhoto(out);
+}
 function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000);
   lastT = t;
@@ -272,7 +310,12 @@ function frame(t) {
     if (n) showSim();
     rate.n += n;
   }
-  if (t - rate.t >= 500) { stats.rate = (rate.n * 1000) / (t - rate.t); rate.t = t; rate.n = 0; }
+  if (t - rate.t >= 500) {
+    stats.rate = (rate.n * 1000) / (t - rate.t);
+    camFps = ((camera.frames - rate.frames) * 1000) / (t - rate.t);
+    rate.t = t; rate.n = 0; rate.frames = camera.frames;
+  }
+  updateCameraFrame();
 
   renderer.draw(CONFIG.fit);
   borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit);
@@ -290,7 +333,7 @@ function updateInfo() {
     stats.grid = `${sim.cols}×${sim.rows} (cell ${cw}×${ch}px)`;
     stats.regions = sim.regions.length;
     stats.seed = sim.P.seed;
-    stats.image = `${imgName} ${bitmap.width}×${bitmap.height}`;
+    stats.image = `${imgName} ${bitmap.width}×${bitmap.height}` + (camera.on ? ` ${Math.round(camFps)}fps` : '');
   }
 }
 
@@ -330,6 +373,100 @@ mon('grid', 'Grid');
 mon('regions', 'Regions', { format: (v) => String(Math.round(v)) });
 mon('seed', 'Seed', { format: (v) => String(Math.round(v)) });
 mon('image', 'Image');
+
+// Input（カメラ入力。試作：段階1）
+const fi = pane.addFolder({ title: 'Input' });
+const cCamera = fi.addBinding(CONFIG, 'camera', { label: 'Camera' });
+tip(cCamera, 'Use the camera as the image (C). The frame at the moment of building sets up the CA; after that only the picture inside the cells follows the camera. Rebuilding (R, seed, cell size…) takes the current frame. Off returns to the previous image');
+const cMirror = fi.addBinding(CONFIG, 'camMirror', { label: '　└ Mirror' });
+tip(cMirror, 'Flip horizontally (for a front camera)');
+let cDevice = null;
+// カメラの一覧（許可を取ったあとで名前が分かる）。Tweakpane は選択肢をあとから変えられないので、同じ位置に作り直す
+async function updateDevices() {
+  let list = [];
+  try { list = await Camera.devices(); } catch (e) { console.error(e); }
+  let index;
+  if (cDevice) { index = fi.children.indexOf(cDevice); cDevice.dispose(); }
+  const opts = Object.fromEntries(list.map((d) => [d.label, d.id]));
+  if (!list.some((d) => d.id === CONFIG.camDevice)) CONFIG.camDevice = list[0]?.id ?? '';
+  cDevice = fi.addBinding(CONFIG, 'camDevice', { label: '　└ Device', options: list.length ? opts : { 'Default': '' }, index });
+  tip(cDevice, 'Camera to use (webcams, capture cards, virtual cameras)');
+  cDevice.hidden = !CONFIG.camera;
+  cDevice.on('change', (ev) => { if (!guiSyncing && camera.on && ev.value !== camera.deviceId) startCamera(); });
+}
+const refreshInput = () => {
+  cMirror.hidden = !CONFIG.camera;
+  if (cDevice) cDevice.hidden = !CONFIG.camera;
+};
+cCamera.on('change', (ev) => { if (!guiSyncing) setCamera(ev.value); });
+onRebuild(cMirror);
+refreshInput();
+
+// cellSize は写真の短辺に対する割合を保つ（カメラと写真で短辺が違うので）
+function keepCellFrac(from, to) {
+  if (!from || !to) return;
+  CONFIG.cellSize = Math.round(CONFIG.cellSize * Math.min(to.width, to.height) / Math.min(from.width, from.height));
+}
+
+function setCamera(on) {
+  refreshInput();
+  if (on) startCamera();
+  else stopCamera();
+}
+
+let camSeq = 0;
+async function startCamera() {
+  const seq = ++camSeq;
+  ++loadSeq; // 読み込み中の写真があれば捨てる
+  status = 'Starting camera…';
+  try {
+    if (!camera.on && bitmap) still = { bitmap, name: imgName };
+    await camera.start(CONFIG.camDevice);
+    if (seq !== camSeq || !CONFIG.camera) { if (seq === camSeq) camera.stop(); return; }
+    CONFIG.camDevice = camera.deviceId;
+    await updateDevices();
+    guiSync();
+    onCameraSize();
+    status = 'Camera';
+  } catch (e) {
+    console.error(e);
+    if (seq !== camSeq) return;
+    camera.stop();
+    CONFIG.camera = false;
+    guiSync();
+    refreshInput();
+    status = `Camera unavailable (${e.name || e.message})`;
+  }
+}
+
+// カメラの寸法が決まった・変わったとき：cellSize の範囲を合わせて作り直す（rebuild がそのフレームを写真にする）
+function onCameraSize() {
+  const prev = bitmap;
+  const size = { width: camera.width, height: camera.height };
+  bitmap = size; // cellRange が寸法を読むので先に入れる（rebuild で実際のフレームに置き換わる）
+  keepCellFrac(prev, size);
+  updateCellRange();
+  aspectName();
+  rebuild();
+}
+
+// restore = 前の写真に戻す（写真をドロップしたときは戻さずに、ドロップした写真を読み込む）
+function stopCamera(restore = true) {
+  ++camSeq;
+  if (camera.on) camera.stop();
+  camFrame = null;
+  if (CONFIG.camera) { CONFIG.camera = false; guiSync(); }
+  refreshInput();
+  if (!restore) still = null;
+  if (!still) return;
+  keepCellFrac(bitmap, still.bitmap);
+  bitmap = still.bitmap; imgName = still.name; still = null;
+  updateBackdrop(bitmap);
+  updateCellRange();
+  aspectName();
+  rebuild();
+  status = '';
+}
 
 // Grid（グリッドと状態数。すべて作り直し）
 const f1 = pane.addFolder({ title: 'Grid' });
@@ -496,7 +633,7 @@ pane.addBlade({ view: 'separator' });
 {
   const keys = document.createElement('dl');
   keys.className = 'keys';
-  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG']]) {
+  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG'], ['C', 'CAMERA']]) {
     keys.insertAdjacentHTML('beforeend', `<dt>${k}</dt><dd>${v}</dd>`);
   }
   // パネルの中身の入れ物に入れる（タイトルを押して畳んだときに一緒に隠れるように）
@@ -571,6 +708,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'n') newSeed();
   else if (k === 'r') rebuild();
   else if (k === 's') savePNG();
+  else if (k === 'c') { CONFIG.camera = !CONFIG.camera; guiSync(); setCamera(CONFIG.camera); }
 });
 
 // ---------- D&D ----------
@@ -580,6 +718,7 @@ window.addEventListener('drop', (e) => {
   const f = e.dataTransfer.files[0];
   if (!f) return;
   if (!f.type.startsWith('image/')) { status = 'Drop an image file'; return; }
+  if (camera.on) stopCamera(false);
   loadImage(f, f.name);
 });
 

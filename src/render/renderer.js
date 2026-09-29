@@ -191,6 +191,17 @@ export class Renderer {
     this.setBlocks(new Uint8Array(layout.cols * layout.rows));
   }
 
+  /** 写真テクスチャの中身だけを差し替える（カメラ入力。photo は setPhoto と同じ寸法のキャンバス） */
+  updatePhoto(photo) {
+    const gl = this.gl;
+    if (!this.photoTex || photo.width !== this.texSize[0] || photo.height !== this.texSize[1]) return false;
+    gl.bindTexture(gl.TEXTURE_2D, this.photoTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, photo);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    return true;
+  }
+
   /** codes = blockCodes の結果（描く位置ごとの倍率の番号と中の位置） */
   setBlocks(codes) {
     const gl = this.gl, { cols, rows } = this.grid;
