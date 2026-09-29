@@ -16,9 +16,31 @@ export const SCALE_LIST = [1, ...BIG_SCALES];
  * 戻り値 { cls, reps, mean }（形は倍率 1 のものと同じ。reps はタイルの左上のマスの番号、mean は s×s の平均色）
  */
 export function analyzeScale(sim, s) {
-  const { cols, rows, mean, K } = sim, cen = sim.centers, N = cols * rows;
+  const { cols, rows, K } = sim, N = cols * rows;
   const cls = new Uint8Array(N), bmean = new Float32Array(N * 3);
   const cand = Array.from({ length: K }, () => []);
+  classifyScale(sim, s, cls, bmean, cand);
+  const R = sim.P.repsPerClass;
+  let reps = cand.map((c) => c.sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, R).map((e) => e[1]));
+  // 空の状態は輝度が近い状態の代表を借りる（analyze と同じ）。大きなマスが1つもなければ倍率 1 の代表
+  if (reps.every((r) => !r.length)) return { cls, reps: sim.reps, mean: bmean };
+  reps = reps.map((r, k) => {
+    if (r.length) return r;
+    for (let d = 1; d < K; d++) {
+      if (k - d >= 0 && reps[k - d].length) return reps[k - d];
+      if (k + d < K && reps[k + d].length) return reps[k + d];
+    }
+    return r;
+  });
+  return { cls, reps: reps.map((r) => Int32Array.from(r)), mean: bmean };
+}
+
+/**
+ * 倍率 s の分類だけ：各マスを左上とする s×s の平均色（bmean）と、その分類（cls）を書く。
+ * cand を渡すと、代表タイルの候補（s の倍数の位置の大きなマス）も集める。カメラ入力では毎世代これだけを作り直す
+ */
+export function classifyScale(sim, s, cls, bmean, cand = null) {
+  const { cols, rows, mean, K } = sim, cen = sim.centers;
   // 積分画像（(cols+1)×(rows+1)、RGB）で s×s の和を求める
   const W1 = cols + 1, sat = new Float64Array(W1 * (rows + 1) * 3);
   for (let y = 0; y < rows; y++) {
@@ -44,22 +66,9 @@ export function analyzeScale(sim, s) {
       const i = y * cols + x;
       cls[i] = best;
       bmean[i * 3] = r; bmean[i * 3 + 1] = g; bmean[i * 3 + 2] = b;
-      if (x % s === 0 && y % s === 0 && x + s <= cols && y + s <= rows) cand[best].push([hash(sim.P.seed, i, s, 0x72657073), i]);
+      if (cand && x % s === 0 && y % s === 0 && x + s <= cols && y + s <= rows) cand[best].push([hash(sim.P.seed, i, s, 0x72657073), i]);
     }
   }
-  const R = sim.P.repsPerClass;
-  let reps = cand.map((c) => c.sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, R).map((e) => e[1]));
-  // 空の状態は輝度が近い状態の代表を借りる（analyze と同じ）。大きなマスが1つもなければ倍率 1 の代表
-  if (reps.every((r) => !r.length)) return { cls, reps: sim.reps, mean: bmean };
-  reps = reps.map((r, k) => {
-    if (r.length) return r;
-    for (let d = 1; d < K; d++) {
-      if (k - d >= 0 && reps[k - d].length) return reps[k - d];
-      if (k + d < K && reps[k + d].length) return reps[k + d];
-    }
-    return r;
-  });
-  return { cls, reps: reps.map((r) => Int32Array.from(r)), mean: bmean };
 }
 
 /**

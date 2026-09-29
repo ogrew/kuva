@@ -8,27 +8,13 @@
  * 戻り値 { palette, cls, reps, mean, centers }（centers = パレットの丸める前の色。大きなマスの分類に使う）
  */
 export function analyze(P, io, rng) {
-  const { cols, rows, Ax, Ay, analysis } = io;
+  const { cols, rows } = io;
   const N = cols * rows;
   const K = P.K;
   const ri = (n) => Math.floor(rng() * n);
 
   // ============ 1. セルごとの平均色 ============
-  const mean = new Float32Array(N * 3);
-  {
-    const d = analysis.data, st = analysis.stride, aa = Ax * Ay;
-    for (let cy = 0; cy < rows; cy++) {
-      for (let cx = 0; cx < cols; cx++) {
-        let r = 0, g = 0, b = 0;
-        for (let y = 0; y < Ay; y++) {
-          let o = ((cy * Ay + y) * st + cx * Ax) * 4;
-          for (let x = 0; x < Ax; x++, o += 4) { r += d[o]; g += d[o + 1]; b += d[o + 2]; }
-        }
-        const i = (cy * cols + cx) * 3;
-        mean[i] = r / aa; mean[i + 1] = g / aa; mean[i + 2] = b / aa;
-      }
-    }
-  }
+  const mean = cellMeans(io);
 
   // ============ 2. k-means で K色パレット抽出 ============
   const cen = new Float32Array(K * 3);
@@ -83,12 +69,7 @@ export function analyze(P, io, rng) {
     const seen = new Int32Array(K);
     const R = P.repsPerClass;
     for (let i = 0; i < N; i++) {
-      let best = 0, bd = Infinity;
-      for (let k = 0; k < K; k++) {
-        const dr = mean[i * 3] - cen[k * 3], dg = mean[i * 3 + 1] - cen[k * 3 + 1], db = mean[i * 3 + 2] - cen[k * 3 + 2];
-        const v = dr * dr + dg * dg + db * db;
-        if (v < bd) { bd = v; best = k; }
-      }
+      const best = nearest(mean, i, cen, K);
       cls[i] = best;
       // リザーバサンプリングで各状態の「代表タイル」を数個選ぶ
       const n = ++seen[best];
@@ -106,4 +87,34 @@ export function analyze(P, io, rng) {
   }
 
   return { palette, cls, reps: reps.map((r) => Int32Array.from(r)), mean, centers: cen };
+}
+
+/** セルごとの平均色（解析用画像の Ax×Ay ブロック平均）。out を渡せばそこに書く */
+export function cellMeans(io, out = null) {
+  const { cols, rows, Ax, Ay, analysis } = io;
+  const mean = out ?? new Float32Array(cols * rows * 3);
+  const d = analysis.data, st = analysis.stride, aa = Ax * Ay;
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      let r = 0, g = 0, b = 0;
+      for (let y = 0; y < Ay; y++) {
+        let o = ((cy * Ay + y) * st + cx * Ax) * 4;
+        for (let x = 0; x < Ax; x++, o += 4) { r += d[o]; g += d[o + 1]; b += d[o + 2]; }
+      }
+      const i = (cy * cols + cx) * 3;
+      mean[i] = r / aa; mean[i + 1] = g / aa; mean[i + 2] = b / aa;
+    }
+  }
+  return mean;
+}
+
+// 平均色 mean の i 番目のセルに最も近いパレットの色（cen = 丸める前のパレット）
+export function nearest(mean, i, cen, K) {
+  let best = 0, bd = Infinity;
+  for (let k = 0; k < K; k++) {
+    const dr = mean[i * 3] - cen[k * 3], dg = mean[i * 3 + 1] - cen[k * 3 + 1], db = mean[i * 3 + 2] - cen[k * 3 + 2];
+    const v = dr * dr + dg * dg + db * db;
+    if (v < bd) { bd = v; best = k; }
+  }
+  return best;
 }
