@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine/sim.js';
+import { SCALE_LIST, blockCodes } from '../src/engine/scale.js';
 import { fakeIO, hashSim } from './helpers.js';
 
 const base = { seed: 7, K: 6, chaos: 0.1, skipProb: 0, bigFrac: 1 };
@@ -141,4 +142,24 @@ test('大きなマス：分裂した子は親の倍率を引き継ぎ、大き�
     s.step();
   }
   assert.ok(splits > 0 && merges > 0);
+});
+
+test('描く位置の情報：倍率・中の位置と、領域の端で欠けた大きなマスの印', () => {
+  const s = new Simulation(base, io()), codes = blockCodes(s), { cols } = s;
+  let cut = 0;
+  for (const g of s.regions) {
+    const k = g.scale;
+    for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
+      const b = codes[y * cols + x];
+      if (k === 1) { assert.equal(b, 0); continue; }
+      const bx = x - (x - g.x) % k, by = y - (y - g.y) % k;
+      assert.equal(SCALE_LIST[b & 3], k);
+      assert.deepEqual([(b >> 2) & 3, (b >> 4) & 3], [x - bx, y - by]);
+      // 欠けたマス = その大きなマスが領域の右端・下端からはみ出す
+      const partial = bx + k > g.x + g.w || by + k > g.y + g.h;
+      assert.equal((b >> 6) & 1, partial ? 1 : 0);
+      cut += partial;
+    }
+  }
+  assert.ok(cut > 0, 'この条件では欠けたマスがある');
 });

@@ -114,15 +114,19 @@ export function fillBlocks(g, sim, next, s) {
 
 /**
  * 描く位置ごとの倍率と、大きなマスの中の位置（描画だけに使う）。
- * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 5
+ * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 4 | 欠けたマス << 6
+ * （中の位置は2ビットずつなので、倍率は 4 まで）
+ * 欠けたマス = 領域の右端・下端で s マスに足りない大きなマス（文字はマスいっぱいに描くと途中で切れるので、1倍で描く）
  */
 export function blockCodes(sim) {
   const { cols } = sim, out = new Uint8Array(sim.cols * sim.rows);
   for (const g of sim.regions) {
     const s = g.scale, li = SCALE_LIST.indexOf(s);
     if (li <= 0) continue;
+    // 欠けた大きなマスが始まる位置（そこから先の列・行。割り切れれば領域の外）
+    const cutX = g.x + g.w - g.w % s, cutY = g.y + g.h - g.h % s;
     for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
-      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 5;
+      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 4 | (x >= cutX || y >= cutY ? 1 : 0) << 6;
     }
   }
   return out;

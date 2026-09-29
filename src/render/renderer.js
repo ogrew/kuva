@@ -5,7 +5,7 @@
 //   flat：cols×rows×(9層 × 倍率3つ) の RGBA8 配列。タイルごとの塗りつぶしの色（0層目の A = 255 なら塗る）。1〜8層目は2色塗りの半分ずつの色
 //   kind：cols×rows の R8UI。描く位置ごとの2色塗りの割り方（0 = 1色、1 = 横、2 = 縦、3 = ＼、4 = ／）
 //   digit：cols×rows×倍率3つ の R8UI 配列。タイルごとの数字 0〜9（マスに重ねる数字）
-//   blk ：cols×rows の R8UI。描く位置ごとの倍率の番号と大きなマスの中の位置（blockCodes）
+//   blk ：cols×rows の R8UI。描く位置ごとの倍率の番号と大きなマスの中の位置、欠けた大きなマスの印（blockCodes）
 //   glyph：0〜9 の文字の形（R8 の10層、ミップマップ付き）。1層がマス1つぶん
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
 // 大きなマス（倍率 s）では、塗りつぶし・2色塗り・数字を大きなマス1つ（左上 = 描くタイル − 中の位置）として引く。
@@ -90,17 +90,21 @@ void main() {
   uint b = texelFetch(uBlk, c, 0).r;
   int li = int(b & 3u);
   float bs = SCALES[li];
-  ivec2 off = ivec2(int((b >> 2) & 7u), int((b >> 5) & 7u));
+  ivec2 off = ivec2(int((b >> 2) & 3u), int((b >> 4) & 3u));
   vec2 q = (vec2(off) + fract(g)) / bs;
   // 倍率が変わった直後（まだ進んでいない領域）は中がそろっていないので、グリッドの内側に収める
   ivec2 bo = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
   vec3 col = tileColor(g, c, si, gx, gy, q, bo, li);
   // 数字：描くタイルの数字を、大きなマスいっぱいの大きさで重ねる（文字の形の1層 = マス1つぶん）。
+  // 領域の端で欠けた大きなマスは、途中で切れないよう、中の各マスに1倍の文字を描く（倍率 1 の数字の層・描くタイル）。
   // ミップマップの段は、マス内の位置の微分（= uScale / 倍率）から決める
   if (uDigitsOn) {
-    int d = int(texelFetch(uDigit, ivec3(bo, li), 0).r);
+    bool cut = ((b >> 6) & 1u) != 0u;
+    int dl = cut ? 0 : li;
+    float ds = cut ? 1.0 : bs;
+    int d = int(texelFetch(uDigit, ivec3(cut ? si : bo, dl), 0).r);
     if (((uDigitMask >> d) & 1) != 0) {
-      float a = textureGrad(uGlyph, vec3(q, float(d)), vec2(uScale.x / bs, 0.0), vec2(0.0, uScale.y / bs)).r;
+      float a = textureGrad(uGlyph, vec3(cut ? fract(g) : q, float(d)), vec2(uScale.x / ds, 0.0), vec2(0.0, uScale.y / ds)).r;
       col = mix(col, uDigitColor, a);
     }
   }
