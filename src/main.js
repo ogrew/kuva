@@ -15,7 +15,7 @@ const CONFIG = {
   cellAspect: 4,  // 1マスの高さの比率（ASPECTS の番号）。高さ = 幅 × 比率。4 = 1:1
   K: 7,           // 状態数 = パレット色数
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
-  gps: 12,        // 世代/秒（即時反映）
+  gps: 15,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
   direction: 'all', // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'（即時反映）
   flatRatio: 0,   // 塗りつぶし：元の位置にないタイルのうち、一色で塗る割合（0 = 塗らない。即時反映）
@@ -28,7 +28,7 @@ const CONFIG = {
   morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
   morphMax: 500,          // A：〃 最長（即時反映）
   inject: true,           // C：写真を流し込む（即時反映。流れるのときだけ効く）
-  injectPeriod: 200,      // C：流し込みの周期（世代）（即時反映）
+  injectPeriod: 120,      // C：流し込みの周期（世代）（即時反映）
   topology: false,        // 領域の分裂・合体
   topologyInterval: 48,   // 変化の間隔の中心値（世代）
   leakEnabled: false,     // 隣からの漏れ
@@ -36,7 +36,7 @@ const CONFIG = {
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
   tempoSlow: 4,           // E：〃 最遅
-  stagger: 200,           // 領域が崩れ始める世代のばらつき（0〜400。0 = 一斉に始まる。即時反映）
+  stagger: 150,           // 領域が崩れ始める世代のばらつき（0〜300。0 = 一斉に始まる。即時反映）
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
@@ -45,7 +45,7 @@ const CONFIG = {
   digitFont: 'silkscreen', // 数字のフォント（DIGIT_FONTS）
   digitColor: '#ffffff', // 数字の色（全マス共通）
   digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
-  regionBorders: false, // デバッグ：白い領域境界（表示だけ、PNGには含めない）
+  regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
 // ルールの味付け → エンジンの設定
@@ -77,14 +77,13 @@ const cellDims = () => {
   const a = ASPECTS[Math.round(CONFIG.cellAspect)] || ASPECTS[4];
   return { cw, ch: Math.max(2, Math.round(cw * a.p)), label: a.label };
 };
-// サイトを開いたときにランダムに決めるもの：seed、K、動き方、cellSize
+// サイトを開いたときにランダムに決めるもの：seed、K、cellSize（動き方は常に「流れる」から）
 // cellSize は写真の短辺の 1%〜6%（対数で一様）。
 // 写真の大きさが分かるのは最初の写真を読み込んだときなので、割合だけ先に決めておく
 const RANDOM_K = [4, 10], RANDOM_CELL_FRAC = [0.01, 0.06];
 const rand = (lo, hi) => lo + Math.random() * (hi - lo);
 CONFIG.seed = Math.floor(Math.random() * 1e6);
 CONFIG.K = Math.floor(rand(RANDOM_K[0], RANDOM_K[1] + 1));
-CONFIG.motion = Math.random() < 0.5 ? 'flow' : 'ca';
 let pendingCellFrac = Math.exp(rand(Math.log(RANDOM_CELL_FRAC[0]), Math.log(RANDOM_CELL_FRAC[1])));
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
 const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっくりになるだけで、世代の中身は変わらない）
@@ -325,14 +324,14 @@ const cDir = list(f2, 'direction', 'Direction', { 'All': 'all', 'Down': 'down', 
 onLive(cDir, 'direction');
 tip(cDir, 'All: each region flows its own way (changes now and then with Region tempo)\nOthers: every region flows that way');
 tip(onLive(num(f2, 'chaos', 'Chaos', 0, 1, 0.01), 'chaos'), 'Share of fully random entries mixed into the rule tables');
-tip(num(f2, 'gps', 'Speed', 0.5, 60, 0.5), 'Generations per second'); // 再生ループが毎フレーム読む
+tip(num(f2, 'gps', 'Speed', 0.5, 48, 0.5), 'Generations per second'); // 再生ループが毎フレーム読む
 
 // Render（描画だけに効く。作り直し不要）
 const f3 = pane.addFolder({ title: 'Render' });
 tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
 tip(f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' }),
-  'Show region boundaries as thin white lines. Display only: not included in saved PNGs');
-const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.01);
+  'Show region boundaries as thin white lines. Also included in saved PNGs');
+const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.1);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
   list(f3, 'flatColor', '　└ Color', { 'Palette': 'palette', 'Mean': 'mean' }),
@@ -396,7 +395,7 @@ tip(cMorph[1], 'Shortest morph (generations)');
 tip(cMorph[2], 'Longest morph (generations)');
 const cInject = fx.addBinding(CONFIG, 'inject', { label: 'Reinject' });
 tip(cInject, 'Flow only. Periodically feeds the photo in from upstream, staggered per region');
-const cPeriod = num(fx, 'injectPeriod', '　└ Period', 20, 600, 10);
+const cPeriod = num(fx, 'injectPeriod', '　└ Period', 20, 360, 10);
 tip(cPeriod, 'Reinject period (generations)');
 onLive(cPeriod, 'injectPeriod');
 const cTempo = fx.addBinding(CONFIG, 'tempo', { label: 'Region tempo' });
@@ -432,13 +431,13 @@ onLive(cTempo, 'tempo', refreshFx);
 onLive(cTopology, 'topology', refreshFx);
 onLive(cLeakEnabled, 'leakEnabled', refreshFx);
 refreshFx();
-const cStagger = num(fx, 'stagger', 'Stagger', 0, 400, 1);
+const cStagger = num(fx, 'stagger', 'Stagger', 0, 300, 1);
 onLive(cStagger, 'stagger');
 tip(cStagger, 'Each region stays as the photo until a generation between 0 and this value, then starts to break up. 0 = all regions start together. Changing it only affects regions that have not started yet');
 
 // Pattern（基本セルオートマトンの模様を重ねる）
 const fe = pane.addFolder({ title: 'Pattern' });
-const cPat = num(fe, 'patFrac', 'Amount', 0, 1, 0.01);
+const cPat = num(fe, 'patFrac', 'Amount', 0, 1, 0.1);
 onLive(cPat, 'patFrac');
 tip(cPat, 'Share of regions (rows of 24+ cells) overlaid with an elementary CA pattern, drawn with one photo tile per region. Pick the rules below');
 // 模様に使うルール：ルールごとのチェックボックス。各領域は ON のルールの中から1つ選ぶ
@@ -476,6 +475,7 @@ function savePNG() {
   const gen = sim.gen, seed = sim.P.seed;
   const cv = renderer.snapshot();
   if (!cv) return;
+  if (CONFIG.regionBorders) borders.drawOnto(cv, renderer.grid, sim.regions); // 画面で見えているときは PNG にも入れる
   cv.toBlob((blob) => {
     if (!blob) { status = 'PNG を書き出せませんでした'; return; }
     const a = document.createElement('a');
