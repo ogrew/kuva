@@ -23,10 +23,10 @@ function checkBlocks(s) {
   }
 }
 
-test('大きなマス：倍率は 2・3 で、小さい領域は小さい倍率に落ちる', () => {
+test('大きなマス：倍率は 2・4 で、小さい領域は小さい倍率に落ちる', () => {
   const s = new Simulation(base, io());
   const scales = new Set(s.regions.map((g) => g.scale));
-  assert.ok(scales.has(2) && scales.has(3));
+  assert.ok(scales.has(2) && scales.has(4) && !scales.has(3));
   for (const g of s.regions) assert.ok(Math.ceil(Math.min(g.w, g.h) / g.scale) >= s.P.bigMinBlocks || g.scale === 1);
   const none = new Simulation({ ...base, bigFrac: 0 }, io());
   assert.ok(none.regions.every((g) => g.scale === 1));

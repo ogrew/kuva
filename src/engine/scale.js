@@ -1,11 +1,13 @@
-// scale.js — 大きなマス。一部の領域では s×s マス（s = 2・3）を1マスとして CA を計算する。
+// scale.js — 大きなマス。一部の領域では s×s マス（s = 2・4）を1マスとして CA を計算する。
 // 状態・タイルは基本のマス目の配列のまま持つ。大きなマスの値は左上のマスに置き、
 // 中の各マスには同じ状態と「出どころのタイル＋大きなマスの中の位置」を書き写す（fillBlocks）。
 // → 隣の領域から読む処理（漏れ・合体）や描画は、どの倍率でも基本のマスとして扱える。
 // 倍率はハッシュで決める（乱数は使わない）。bigFrac = 0 なら全領域が 1 で、従来と同じ映像。
 import { hash } from './rng.js';
 
-export const BIG_SCALES = [2, 3];
+export const BIG_SCALES = [2, 4];
+// 描画に渡す倍率の番号（0 = 倍率 1、1 = 2、2 = 4）
+export const SCALE_LIST = [1, ...BIG_SCALES];
 
 /**
  * 倍率 s の解析。すべてのマスについて「そこを左上とする s×s の平均色」（グリッドの外は含めない）を
@@ -60,16 +62,19 @@ export function analyzeScale(sim, s) {
 }
 
 /**
- * 領域の倍率。hash(seed, 領域) < bigFrac の領域だけ 2 か 3（半々）。
+ * 領域の倍率。hash(seed, 領域) < bigFrac の領域だけ 2 か 4（半々）。
  * 大きなマスが短いほうの辺に bigMinBlocks 個並ばないなら、小さい倍率に落とす。元写真のままの領域は 1
  * bigFrac を上げると大きなマスの領域が増えるだけで、入れ替わらない
  */
 export function regionScale(sim, g) {
   const P = sim.P;
   if (g.motion === 'still' || !(g.bigU < P.bigFrac)) return 1;
-  let s = BIG_SCALES[Math.floor(g.bigV * BIG_SCALES.length)];
-  while (s > 1 && Math.ceil(Math.min(g.w, g.h) / s) < P.bigMinBlocks) s--;
-  return s;
+  // 落とす先も候補の中から（4 → 2 → 1）
+  for (let k = Math.floor(g.bigV * BIG_SCALES.length); k >= 0; k--) {
+    const s = BIG_SCALES[k];
+    if (Math.ceil(Math.min(g.w, g.h) / s) >= P.bigMinBlocks) return s;
+  }
+  return 1;
 }
 
 /**
