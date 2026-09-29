@@ -77,14 +77,13 @@ const cellDims = () => {
   const a = ASPECTS[Math.round(CONFIG.cellAspect)] || ASPECTS[4];
   return { cw, ch: Math.max(2, Math.round(cw * a.p)), label: a.label };
 };
-// サイトを開いたときにランダムに決めるもの：seed、K、動き方、cellSize
+// サイトを開いたときにランダムに決めるもの：seed、K、cellSize（動き方は常に「流れる」から）
 // cellSize は写真の短辺の 1%〜6%（対数で一様）。
 // 写真の大きさが分かるのは最初の写真を読み込んだときなので、割合だけ先に決めておく
 const RANDOM_K = [4, 10], RANDOM_CELL_FRAC = [0.01, 0.06];
 const rand = (lo, hi) => lo + Math.random() * (hi - lo);
 CONFIG.seed = Math.floor(Math.random() * 1e6);
 CONFIG.K = Math.floor(rand(RANDOM_K[0], RANDOM_K[1] + 1));
-CONFIG.motion = Math.random() < 0.5 ? 'flow' : 'ca';
 let pendingCellFrac = Math.exp(rand(Math.log(RANDOM_CELL_FRAC[0]), Math.log(RANDOM_CELL_FRAC[1])));
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
 const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっくりになるだけで、世代の中身は変わらない）
