@@ -40,8 +40,8 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `src/engine/flat.js` | 塗りつぶすタイルの選び方（描画だけに効く）。結果はタイルごとの RGBA（1色＋2色塗りの半分ずつの8色で9層。大きなマスは倍率ごと）と、描く位置ごとの割り方で、描画に渡す |
 | `src/image.js` | グリッド配置、パディング、縮小。kivi の sketch.js から |
 | `src/camera.js` | カメラ入力。`getUserMedia`、新しいフレームの印（`requestVideoFrameCallback`）、今のフレームの写し（`grab`）、カメラの一覧 |
-| `src/engine/digits.js` | マスに重ねる数字（タイルごとの 0〜9）。描画だけに効く |
-| `src/render/glyphs.js` | 数字 0〜9 の文字の形（Canvas 2D。フォント、または 7セグ・ドットをコードで描く） |
+| `src/engine/digits.js` | マスに重ねる文字の番号（タイルごとの 0〜9）。描画だけに効く |
+| `src/render/glyphs.js` | 数字 0〜9・ひらがな あ〜こ の文字の形（Canvas 2D。フォント、または 7セグ・ドットをコードで描く） |
 | `src/render/renderer.js` | WebGL2。写真テクスチャと `src` テクスチャ（R32I）など（塗りつぶし・数字の分も）。`snapshot()` は PNG 書き出し用に、見えない描画先に元写真の範囲だけを描く |
 | `samples/` | サンプル画像。開いたときにランダムに1枚を読み込む。一覧は `import.meta.glob` でビルド時に作るので、置くだけで候補に入る。公開される（AI 生成の画像。埋め込みの XMP は生成元のラベルと ID だけ） |
 | `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
@@ -165,7 +165,7 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
 - `getUserMedia` は安全な接続（localhost・https）でだけ使える。GitHub Pages は https なので使える
 - Claude のブラウザペインにはカメラがないので、確かめるときは `getUserMedia` を `canvas.captureStream()` に差し替える
 
-## マスの数字（Digits）
+## マスの文字（Glyphs）
 
 - 賑やかし。正方形のマス（Aspect ×1、`cw === ch`）のときだけ、マスに 0〜9 を重ねる。Aspect が ×1 以外なら GUI を隠して描かない（値は残す）。描画だけに効く（CA の状態・ゴールデンに影響しない）。PNG 書き出しにも入る
 - 数字は写真タイルごとに1つ（`tileDigits`）。描くタイル（`displaySrc`）の数字を描くので、タイルと一緒に流れる。seed は混ぜない
@@ -173,9 +173,13 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
   - `lum`：平均色の明るさを分位で10段階（暗い = 0）。`state`：K色の分類の一の位。どちらも残す（GUI の By）
   - 最初は平均色のハッシュにしたが、隣のタイルでも数字がばらばらになり、ノイズのように散らばって見えたので不採用。近いタイルが同じ数字になる決め方にした
   - 全部の数字を出すとうるさいので、描く数字を選べる（`digitShow`、初期は 0・1）。GUI は 5 個 × 2 行の自作の行（`.digit-show`。Tweakpane にない部品。縦に10行並べると見づらいため）
+- 文字の種類（GUI の Set、`glyphSet`）：数字 0〜9 か、ひらがな（`GLYPH_SETS`）。番号 0〜9 の決め方は同じで、番号 d の文字を描くだけ（ユーザーの希望）
+  - ひらがなは Show の代わりに入力欄（Text、`kanaText`）。書式はカンマ区切りで番号 0〜9 に1文字ずつ（`parseGlyphText`。初期値 `あ,い,…,こ`）。空の枠の番号は描かない（マスクと空の層）ので、Show と同じく「8 だけ」ができる（`,,,,,,,,け,`。ユーザーの希望。先頭から詰めて割り当てる形だと、特定の番号だけを選べなかった）。「、」「，」も区切り、各枠は1文字目だけ、区切りがなければ1文字ずつ先頭から。確定したら `formatGlyphText` で正規の形に書き直す。漢字・カタカナも通す（ユーザーの判断で黙認）。DotGothic16 は `text=` で絞らずに読み込む（入力された文字を描くため。使う文字の部分だけが読み込まれる）
+  - フォントは種類ごとに別の項目（`digitFont`・`kanaFont`）にして、使わないほうを隠す（Tweakpane は選択肢をあとから変えられないため）。コードの名前は digit のまま
 - 描画はシェーダ：タイルごとの数字（R8UI）と文字の形（R8 の10層、ミップマップ付き）の2枚。負荷はマスの数によらない。Canvas 2D でマスごとに `fillText` する案は重いので不採用
-- 文字の形（`glyphs.js`）：フォントで描くものは、10文字の外形の最大の幅・高さがマスに収まる大きさで、各文字を中央に置く。7-segment・Dot 5×7 はコードで図形として描く。Web フォントは `index.html` で数字の10文字だけ読み込み（`text=0123456789`）、`document.fonts.load` を待ってから作る
+- 文字の形（`glyphs.js`）：フォントで描くものは、10文字の外形の最大の幅・高さがマスに収まる大きさで、各文字を中央に置く。7-segment・Dot 5×7 はコードで図形として描く。Web フォントは `index.html` で使う10文字だけ読み込み（`text=`。DotGothic16 だけは全体）、`document.fonts.load` を待ってから作る
 - フォントは Grotesk・Mono・7-segment・Dot 5×7・Silkscreen（初期）・Orbitron。Serif・Rounded（M PLUS 1p）・VT323・Share Tech Mono は試して不採用
+- ひらがなのフォントは DotGothic16（初期。ドット絵のゴシック体で、デジタルっぽい見た目にしたいというユーザーの希望）と M PLUS 1p。Google Fonts でかなを持つもの（Palette Mosaic・Stick・Monomaniac One・Murecho・Rampart One・Train One・Rock 3D）も見比べたが、デジタルっぽいのは DotGothic16 だけだった。Moirai One・Zen Dots はかなを持たない
 
 ## 決定事項
 

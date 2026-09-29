@@ -10,7 +10,7 @@ import { loadBitmap, gridLayout, paddedCanvas, drawPadded, scaledCanvas, pixelsO
 import { Camera } from './camera.js';
 import { Renderer } from './render/renderer.js';
 import { RegionBorders } from './render/region-borders.js';
-import { DIGIT_FONTS, GLYPH_SIZE, makeGlyphs } from './render/glyphs.js';
+import { DIGIT_FONTS, GLYPH_SETS, GLYPH_SIZE, KANA_FONTS, formatGlyphText, makeGlyphs, parseGlyphText } from './render/glyphs.js';
 
 const CONFIG = {
   seed: 12345,
@@ -44,11 +44,14 @@ const CONFIG = {
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
-  digits: false,  // マスに数字を重ねる（正方形のマスのときだけ。描画だけに効く）
-  digitBy: 'lum', // 数字の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
+  digits: false,  // マスに文字を重ねる（GUI では Glyphs。正方形のマスのときだけ。描画だけに効く）
+  digitBy: 'lum', // 番号 0〜9 の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
+  glyphSet: 'digits', // 番号に割り当てる文字（GLYPH_SETS）：'digits'（0〜9） | 'kana'（kanaText）
   digitFont: 'silkscreen', // 数字のフォント（DIGIT_FONTS）
+  kanaFont: 'dotgothic',   // ひらがなのフォント（KANA_FONTS）
+  kanaText: formatGlyphText([...GLYPH_SETS.kana.chars]), // ひらがなのとき番号 0〜9 に割り当てる文字（区切り。空の枠の番号は描かない。漢字・カタカナも通す）
   digitColor: '#ffffff', // 数字の色（全マス共通）
-  digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
+  digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ。ひらがなのときは使わない）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
   // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
@@ -207,19 +210,23 @@ function updateDigitLayers() {
   }
 }
 
-// 数字：正方形のマス（Aspect = 1）のときだけ描く。文字の形はフォントを変えたときだけ作り直す
+// 文字：正方形のマス（Aspect = 1）のときだけ描く。文字の形は文字の種類・フォントを変えたときだけ作り直す
 const isSquare = () => ASPECTS[Math.round(CONFIG.cellAspect)]?.p === 1;
 let glyphFont = '', glyphSeq = 0;
 function updateDigits() {
   const g = renderer.grid;
-  const mask = CONFIG.digitShow.reduce((m, d) => m | (1 << d), 0);
+  // 描く番号：数字は Show で選んだもの、ひらがなは文字の入っている枠
+  const kana = CONFIG.glyphSet === 'kana', chars = parseGlyphText(CONFIG.kanaText);
+  const mask = kana ? chars.reduce((m, c, d) => (c ? m | (1 << d) : m), 0) : CONFIG.digitShow.reduce((m, d) => m | (1 << d), 0);
   const on = CONFIG.digits && !!g && g.cw === g.ch && mask !== 0;
   const hex = parseInt(CONFIG.digitColor.slice(1, 7), 16);
   renderer.setDigitStyle(on, [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255], mask);
   if (on) updateDigitLayers();
-  if (on && glyphFont !== CONFIG.digitFont) {
-    const font = glyphFont = CONFIG.digitFont, seq = ++glyphSeq;
-    makeGlyphs(font).then((data) => { if (seq === glyphSeq) renderer.setGlyphs(data, GLYPH_SIZE); });
+  const set = CONFIG.glyphSet, font = kana ? CONFIG.kanaFont : CONFIG.digitFont, key = `${set}/${font}/${kana ? chars.join(',') : ''}`;
+  if (on && glyphFont !== key) {
+    glyphFont = key;
+    const seq = ++glyphSeq;
+    makeGlyphs(set, font, kana ? chars : null).then((data) => { if (seq === glyphSeq) renderer.setGlyphs(data, GLYPH_SIZE); });
   }
 }
 
@@ -546,16 +553,20 @@ tip(cFlat, 'Share of carried cells (photo tiles away from their original place) 
 tip(cFlatSub[0], 'Per tile: decide for each photo tile\nPer color: paint all tiles of the same K color together');
 tip(cFlatSub[1], 'Palette: the K color the tile belongs to\nMean: the tile\'s own average color');
 tip(cFlatSub[2], 'Share of regions painted in two colors: each tile is halved and each half gets its own color. The cut (horizontal, vertical or either diagonal) is picked per region to fit the photo. 0 = off');
-const cDigits = f3.addBinding(CONFIG, 'digits', { label: 'Digits' });
+const cDigits = f3.addBinding(CONFIG, 'digits', { label: 'Glyphs' });
+const fontList = (fonts) => Object.fromEntries(Object.entries(fonts).map(([k, f]) => [f.label, k]));
 const cDigitSub = [
   list(f3, 'digitBy', '　└ By', { 'Brightness': 'lum', 'State': 'state' }),
-  list(f3, 'digitFont', '　└ Font', Object.fromEntries(Object.entries(DIGIT_FONTS).map(([k, f]) => [f.label, k]))),
+  list(f3, 'glyphSet', '　└ Set', Object.fromEntries(Object.entries(GLYPH_SETS).map(([k, g]) => [g.label, k]))),
+  // フォントは文字の種類ごとに別の項目にし、使わないほうは隠す（Tweakpane は選択肢をあとから変えられない）
+  list(f3, 'digitFont', '　└ Font', fontList(DIGIT_FONTS)),
+  list(f3, 'kanaFont', '　└ Font', fontList(KANA_FONTS)),
   f3.addBinding(CONFIG, 'digitColor', { label: '　└ Color' }),
 ];
-// 表示する数字：0〜9 の切り替えを横に並べた1行（Tweakpane にない部品なので、同じ見た目の行を作って Color の下に入れる）
+// 表示する文字：0〜9 番の切り替えを横に並べた1行（Tweakpane にない部品なので、同じ見た目の行を作って Color の下に入れる）
 const cDigitShow = document.createElement('div');
 cDigitShow.className = 'tp-lblv digit-show';
-cDigitShow.title = 'Digits to draw. Cells whose digit is off show the photo only';
+cDigitShow.title = 'Glyphs to draw. Cells whose glyph is off show the photo only';
 cDigitShow.innerHTML = '<div class="tp-lblv_l">　└ Show</div><div class="tp-lblv_v"></div>';
 for (let d = 0; d < 10; d++) {
   const el = document.createElement('label');
@@ -566,15 +577,30 @@ for (let d = 0; d < 10; d++) {
   });
   cDigitShow.lastChild.appendChild(el);
 }
-cDigitSub[2].element.after(cDigitShow);
-tip(cDigits, 'Square cells (Aspect ×1) only. Draws a digit 0–9 in each cell. Tiles of the same average color get the same digit, and it moves with the tile');
-tip(cDigitSub[0], 'Brightness: 10 steps by brightness, each digit about equally common (dark = 0)\nState: the K color the CA sees (ones digit when K > 10)');
-tip(cDigitSub[1], 'Font of the digits');
-tip(cDigitSub[2], 'Color of the digits (same for every cell)');
+cDigitSub[4].element.after(cDigitShow);
+// ひらがなの文字：Show の代わりに入力欄（区切りで番号 0〜9。確定したら「あ,い,…」の形に書き直す）
+const cKanaText = f3.addBinding(CONFIG, 'kanaText', { label: '　└ Text' });
+cDigitShow.after(cKanaText.element);
+cKanaText.on('change', () => {
+  const t = formatGlyphText(parseGlyphText(CONFIG.kanaText));
+  if (t !== CONFIG.kanaText) { CONFIG.kanaText = t; guiSync(); }
+  updateDigits();
+});
+tip(cKanaText, 'Comma-separated, one character per glyph 0–9 (dark = 0 with Brightness). Leave a slot empty to skip that glyph, e.g. ",,,,,,,,け," draws only 8. Without commas, characters are assigned from 0 in order');
+tip(cDigits, 'Square cells (Aspect ×1) only. Draws a glyph (a digit 0–9 or one of your characters) in each cell. Tiles of the same average color get the same glyph, and it moves with the tile');
+tip(cDigitSub[0], 'Brightness: 10 steps by brightness, each glyph about equally common (dark = 0 / 1st character)\nState: the K color the CA sees (ones digit when K > 10)');
+tip(cDigitSub[1], 'Digits: 0–9\nHiragana: the characters in Text (one per glyph 0–9)');
+tip(cDigitSub[2], 'Font of the digits');
+tip(cDigitSub[3], 'Font of the hiragana');
+tip(cDigitSub[4], 'Color of the glyphs (same for every cell)');
 const refreshDigits = () => {
+  const show = isSquare() && CONFIG.digits, kana = CONFIG.glyphSet === 'kana';
   cDigits.hidden = !isSquare();
-  cDigitSub.forEach((c) => { c.hidden = !isSquare() || !CONFIG.digits; });
-  cDigitShow.hidden = !isSquare() || !CONFIG.digits;
+  cDigitSub.forEach((c) => { c.hidden = !show; });
+  cDigitSub[2].hidden = !show || kana;
+  cDigitSub[3].hidden = !show || !kana;
+  cDigitShow.hidden = !show || kana;
+  cKanaText.hidden = !show || !kana;
 };
 [cDigits, ...cDigitSub].forEach((c) => c.on('change', () => { refreshDigits(); updateDigits(); }));
 cDigitSub[0].on('change', updateDigitLayers);

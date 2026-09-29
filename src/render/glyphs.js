@@ -1,5 +1,5 @@
-// glyphs.js — マスに重ねる数字 0〜9 の文字の形を作る（Canvas 2D。写真やグリッドとは関係ない）
-// 1文字 = size×size の正方形1枚（マス1つぶん）。
+// glyphs.js — マスに重ねる文字（数字 0〜9、またはひらがな あ〜こ）の形を作る（Canvas 2D。写真やグリッドとは関係ない）
+// 1文字 = size×size の正方形1枚（マス1つぶん）。番号 d（0〜9）の文字を d 枚目に描く。
 //   フォントで描くもの：10文字で同じ文字サイズにし、10文字の外形の最大の幅・高さがちょうど正方形に収まる大きさにする。
 //                       各文字は自分の外形で中央に置く
 //   コードで描くもの（7セグ・ドット）：図形として描く。フォントの読み込みがいらず、オフラインでも同じ見た目
@@ -43,7 +43,27 @@ function drawDot57(cx, d, S) {
   });
 }
 
-// GUI のフォントの選択肢。web = Web フォントの名前（index.html で数字だけ読み込んでいる）、draw = コードで描く
+// 文字の種類。番号 0〜9 に割り当てる10文字（ひらがなは GUI で書き換えられる。これは初期値）
+export const GLYPH_SETS = {
+  digits: { label: 'Digits', chars: '0123456789' },
+  kana: { label: 'Hiragana', chars: 'あいうえおかきくけこ' },
+};
+export const GLYPH_MAX = 10;
+
+/**
+ * 入力欄の文字 → 番号 0〜9 ごとの文字（長さ 10。'' はその番号を描かない）。
+ * 書式は区切り（「あ,い,う」。「、」「，」も区切りにする）。空の枠は描かない番号（「,,,,,,,,け,」なら 8 だけ）。
+ * 各枠は先頭の1文字だけを使う。区切りがなければ1文字ずつ先頭から割り当てる
+ */
+export function parseGlyphText(text) {
+  const t = String(text).trim();
+  const parts = /[,、，]/.test(t) ? t.split(/[,、，]/).map((p) => [...p.trim()][0] ?? '') : [...t.replace(/\s/g, '')];
+  return Array.from({ length: GLYPH_MAX }, (_, d) => parts[d] ?? '');
+}
+/** 番号ごとの文字を入力欄の書式に戻す */
+export const formatGlyphText = (chars) => chars.join(',');
+
+// GUI のフォントの選択肢（文字の種類ごと）。web = Web フォントの名前（index.html で使う文字だけ読み込んでいる）、draw = コードで描く
 export const DIGIT_FONTS = {
   grotesk: { label: 'Grotesk', css: '"Space Grotesk", sans-serif', web: 'Space Grotesk', weight: 700 },
   mono: { label: 'Mono', css: 'Menlo, Consolas, "Courier New", monospace', weight: 700 },
@@ -52,13 +72,26 @@ export const DIGIT_FONTS = {
   silkscreen: { label: 'Silkscreen', css: '"Silkscreen", monospace', web: 'Silkscreen', weight: 400 },
   orbitron: { label: 'Orbitron', css: '"Orbitron", sans-serif', web: 'Orbitron', weight: 700 },
 };
+// ひらがな：デジタルっぽいもの（ドット）と、パネルと同じもの（M PLUS 1p はパネル用に読み込み済み）
+export const KANA_FONTS = {
+  dotgothic: { label: 'DotGothic16', css: '"DotGothic16", sans-serif', web: 'DotGothic16', weight: 400 },
+  mplus: { label: 'M PLUS 1p', css: '"M PLUS 1p", sans-serif', web: 'M PLUS 1p', weight: 700 },
+};
+const FONTS = { digits: DIGIT_FONTS, kana: KANA_FONTS };
+const DEFAULT_FONT = { digits: 'silkscreen', kana: 'dotgothic' };
 export const GLYPH_SIZE = 256;
 
-/** 文字の形を作る。Web フォントは読み込みを待つ（オフラインなどで読めなければ、代わりのフォントで描く） */
-export async function makeGlyphs(key, size = GLYPH_SIZE) {
-  const f = DIGIT_FONTS[key] || DIGIT_FONTS.silkscreen;
+/**
+ * 文字の形を作る。set = 文字の種類（GLYPH_SETS）、key = その種類のフォント（DIGIT_FONTS・KANA_FONTS）、
+ * chars = 番号 0〜9 ごとの文字（parseGlyphText の結果。省略すると種類の10文字。'' の番号の層は空）。
+ * Web フォントは読み込みを待つ（オフラインなどで読めなければ、代わりのフォントで描く）
+ */
+export async function makeGlyphs(set, key, chars = null, size = GLYPH_SIZE) {
+  const fonts = FONTS[set] || FONTS.digits;
+  chars ??= [...(GLYPH_SETS[set] || GLYPH_SETS.digits).chars];
+  const f = fonts[key] || fonts[DEFAULT_FONT[set] || 'silkscreen'];
   if (f.web) {
-    try { await document.fonts.load(`${f.weight} 100px "${f.web}"`, '0123456789'); } catch { /* 代わりのフォントで描く */ }
+    try { await document.fonts.load(`${f.weight} 100px "${f.web}"`, chars.join('')); } catch { /* 代わりのフォントで描く */ }
   }
   const cv = document.createElement('canvas');
   cv.width = size; cv.height = size;
@@ -70,27 +103,29 @@ export async function makeGlyphs(key, size = GLYPH_SIZE) {
     for (let i = 0, o = d * size * size; i < size * size; i++) out[o + i] = px[i * 4 + 3];
   };
   if (f.draw) {
-    for (let d = 0; d < 10; d++) { cx.clearRect(0, 0, size, size); f.draw(cx, d, size); grab(d); }
+    for (let d = 0; d < GLYPH_MAX; d++) { cx.clearRect(0, 0, size, size); f.draw(cx, d, size); grab(d); }
     return out;
   }
-  // 基準の大きさで10文字の外形を測り、いちばん大きい幅・高さが size に収まるよう拡大する
+  // 基準の大きさで全部の文字の外形を測り、いちばん大きい幅・高さが size に収まるよう拡大する
   const REF = 100;
   cx.font = `${f.weight} ${REF}px ${f.css}`;
-  const ms = [...'0123456789'].map((ch) => cx.measureText(ch));
+  const ms = chars.map((ch) => (ch ? cx.measureText(ch) : null));
   let mw = 0, mh = 0;
   for (const m of ms) {
+    if (!m) continue;
     mw = Math.max(mw, m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
     mh = Math.max(mh, m.actualBoundingBoxAscent + m.actualBoundingBoxDescent);
   }
   const k = size / Math.max(mw, mh, 1);
   cx.font = `${f.weight} ${REF * k}px ${f.css}`;
-  for (let d = 0; d < 10; d++) {
+  for (let d = 0; d < GLYPH_MAX; d++) {
     const m = ms[d];
+    if (!m) continue; // 文字のない番号の層は空のまま
     cx.clearRect(0, 0, size, size);
     // 外形の中心を正方形の中心に合わせる（textAlign = left、textBaseline = alphabetic の基準点から）
     const x = size / 2 - ((m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2) * k;
     const y = size / 2 + ((m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2) * k;
-    cx.fillText(String(d), x, y);
+    cx.fillText(chars[d], x, y);
     grab(d);
   }
   return out;
