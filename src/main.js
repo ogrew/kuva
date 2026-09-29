@@ -45,7 +45,7 @@ const CONFIG = {
   digitFont: 'silkscreen', // 数字のフォント（DIGIT_FONTS）
   digitColor: '#ffffff', // 数字の色（全マス共通）
   digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
-  regionBorders: false, // デバッグ：白い領域境界（表示だけ、PNGには含めない）
+  regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
 // ルールの味付け → エンジンの設定
@@ -330,7 +330,7 @@ tip(num(f2, 'gps', 'Speed', 0.5, 48, 0.5), 'Generations per second'); // 再生�
 const f3 = pane.addFolder({ title: 'Render' });
 tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
 tip(f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' }),
-  'Show region boundaries as thin white lines. Display only: not included in saved PNGs');
+  'Show region boundaries as thin white lines. Also included in saved PNGs');
 const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.1);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
@@ -475,6 +475,7 @@ function savePNG() {
   const gen = sim.gen, seed = sim.P.seed;
   const cv = renderer.snapshot();
   if (!cv) return;
+  if (CONFIG.regionBorders) borders.drawOnto(cv, renderer.grid, sim.regions); // 画面で見えているときは PNG にも入れる
   cv.toBlob((blob) => {
     if (!blob) { status = 'PNG を書き出せませんでした'; return; }
     const a = document.createElement('a');
