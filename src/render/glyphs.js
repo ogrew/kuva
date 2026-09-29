@@ -43,11 +43,25 @@ function drawDot57(cx, d, S) {
   });
 }
 
-// 文字の種類。番号 0〜9 に割り当てる10文字
+// 文字の種類。番号 0〜9 に割り当てる10文字（ひらがなは GUI で書き換えられる。これは初期値）
 export const GLYPH_SETS = {
   digits: { label: 'Digits', chars: '0123456789' },
   kana: { label: 'Hiragana', chars: 'あいうえおかきくけこ' },
 };
+export const GLYPH_MAX = 10;
+
+/**
+ * 入力欄の文字 → 番号 0〜9 ごとの文字（長さ 10。'' はその番号を描かない）。
+ * 書式は区切り（「あ,い,う」。「、」「，」も区切りにする）。空の枠は描かない番号（「,,,,,,,,け,」なら 8 だけ）。
+ * 各枠は先頭の1文字だけを使う。区切りがなければ1文字ずつ先頭から割り当てる
+ */
+export function parseGlyphText(text) {
+  const t = String(text).trim();
+  const parts = /[,、，]/.test(t) ? t.split(/[,、，]/).map((p) => [...p.trim()][0] ?? '') : [...t.replace(/\s/g, '')];
+  return Array.from({ length: GLYPH_MAX }, (_, d) => parts[d] ?? '');
+}
+/** 番号ごとの文字を入力欄の書式に戻す */
+export const formatGlyphText = (chars) => chars.join(',');
 
 // GUI のフォントの選択肢（文字の種類ごと）。web = Web フォントの名前（index.html で使う文字だけ読み込んでいる）、draw = コードで描く
 export const DIGIT_FONTS = {
@@ -68,11 +82,13 @@ const DEFAULT_FONT = { digits: 'silkscreen', kana: 'dotgothic' };
 export const GLYPH_SIZE = 256;
 
 /**
- * 文字の形を作る。set = 文字の種類（GLYPH_SETS）、key = その種類のフォント（DIGIT_FONTS・KANA_FONTS）。
+ * 文字の形を作る。set = 文字の種類（GLYPH_SETS）、key = その種類のフォント（DIGIT_FONTS・KANA_FONTS）、
+ * chars = 番号 0〜9 ごとの文字（parseGlyphText の結果。省略すると種類の10文字。'' の番号の層は空）。
  * Web フォントは読み込みを待つ（オフラインなどで読めなければ、代わりのフォントで描く）
  */
-export async function makeGlyphs(set, key, size = GLYPH_SIZE) {
-  const fonts = FONTS[set] || FONTS.digits, chars = [...(GLYPH_SETS[set] || GLYPH_SETS.digits).chars];
+export async function makeGlyphs(set, key, chars = null, size = GLYPH_SIZE) {
+  const fonts = FONTS[set] || FONTS.digits;
+  chars ??= [...(GLYPH_SETS[set] || GLYPH_SETS.digits).chars];
   const f = fonts[key] || fonts[DEFAULT_FONT[set] || 'silkscreen'];
   if (f.web) {
     try { await document.fonts.load(`${f.weight} 100px "${f.web}"`, chars.join('')); } catch { /* 代わりのフォントで描く */ }
@@ -87,22 +103,24 @@ export async function makeGlyphs(set, key, size = GLYPH_SIZE) {
     for (let i = 0, o = d * size * size; i < size * size; i++) out[o + i] = px[i * 4 + 3];
   };
   if (f.draw) {
-    for (let d = 0; d < 10; d++) { cx.clearRect(0, 0, size, size); f.draw(cx, d, size); grab(d); }
+    for (let d = 0; d < GLYPH_MAX; d++) { cx.clearRect(0, 0, size, size); f.draw(cx, d, size); grab(d); }
     return out;
   }
-  // 基準の大きさで10文字の外形を測り、いちばん大きい幅・高さが size に収まるよう拡大する
+  // 基準の大きさで全部の文字の外形を測り、いちばん大きい幅・高さが size に収まるよう拡大する
   const REF = 100;
   cx.font = `${f.weight} ${REF}px ${f.css}`;
-  const ms = chars.map((ch) => cx.measureText(ch));
+  const ms = chars.map((ch) => (ch ? cx.measureText(ch) : null));
   let mw = 0, mh = 0;
   for (const m of ms) {
+    if (!m) continue;
     mw = Math.max(mw, m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
     mh = Math.max(mh, m.actualBoundingBoxAscent + m.actualBoundingBoxDescent);
   }
   const k = size / Math.max(mw, mh, 1);
   cx.font = `${f.weight} ${REF * k}px ${f.css}`;
-  for (let d = 0; d < 10; d++) {
+  for (let d = 0; d < GLYPH_MAX; d++) {
     const m = ms[d];
+    if (!m) continue; // 文字のない番号の層は空のまま
     cx.clearRect(0, 0, size, size);
     // 外形の中心を正方形の中心に合わせる（textAlign = left、textBaseline = alphabetic の基準点から）
     const x = size / 2 - ((m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2) * k;

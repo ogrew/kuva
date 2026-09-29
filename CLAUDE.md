@@ -173,9 +173,11 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
   - `lum`：平均色の明るさを分位で10段階（暗い = 0）。`state`：K色の分類の一の位。どちらも残す（GUI の By）
   - 最初は平均色のハッシュにしたが、隣のタイルでも数字がばらばらになり、ノイズのように散らばって見えたので不採用。近いタイルが同じ数字になる決め方にした
   - 全部の数字を出すとうるさいので、描く数字を選べる（`digitShow`、初期は 0・1）。GUI は 5 個 × 2 行の自作の行（`.digit-show`。Tweakpane にない部品。縦に10行並べると見づらいため）
-- 文字の種類（GUI の Set、`glyphSet`）：数字 0〜9 か、ひらがな あいうえおかきくけこ（`GLYPH_SETS`）。番号 0〜9 の決め方は同じで、番号 d の文字を描くだけ（ユーザーの希望。0 → あ）。フォントは種類ごとに別の項目（`digitFont`・`kanaFont`）にして、使わないほうを隠す（Tweakpane は選択肢をあとから変えられないため）。コードの名前は digit のまま
+- 文字の種類（GUI の Set、`glyphSet`）：数字 0〜9 か、ひらがな（`GLYPH_SETS`）。番号 0〜9 の決め方は同じで、番号 d の文字を描くだけ（ユーザーの希望）
+  - ひらがなは Show の代わりに入力欄（Text、`kanaText`）。書式はカンマ区切りで番号 0〜9 に1文字ずつ（`parseGlyphText`。初期値 `あ,い,…,こ`）。空の枠の番号は描かない（マスクと空の層）ので、Show と同じく「8 だけ」ができる（`,,,,,,,,け,`。ユーザーの希望。先頭から詰めて割り当てる形だと、特定の番号だけを選べなかった）。「、」「，」も区切り、各枠は1文字目だけ、区切りがなければ1文字ずつ先頭から。確定したら `formatGlyphText` で正規の形に書き直す。漢字・カタカナも通す（ユーザーの判断で黙認）。DotGothic16 は `text=` で絞らずに読み込む（入力された文字を描くため。使う文字の部分だけが読み込まれる）
+  - フォントは種類ごとに別の項目（`digitFont`・`kanaFont`）にして、使わないほうを隠す（Tweakpane は選択肢をあとから変えられないため）。コードの名前は digit のまま
 - 描画はシェーダ：タイルごとの数字（R8UI）と文字の形（R8 の10層、ミップマップ付き）の2枚。負荷はマスの数によらない。Canvas 2D でマスごとに `fillText` する案は重いので不採用
-- 文字の形（`glyphs.js`）：フォントで描くものは、10文字の外形の最大の幅・高さがマスに収まる大きさで、各文字を中央に置く。7-segment・Dot 5×7 はコードで図形として描く。Web フォントは `index.html` で使う10文字だけ読み込み（`text=`。ひらがなは あ〜こ）、`document.fonts.load` を待ってから作る
+- 文字の形（`glyphs.js`）：フォントで描くものは、10文字の外形の最大の幅・高さがマスに収まる大きさで、各文字を中央に置く。7-segment・Dot 5×7 はコードで図形として描く。Web フォントは `index.html` で使う10文字だけ読み込み（`text=`。DotGothic16 だけは全体）、`document.fonts.load` を待ってから作る
 - フォントは Grotesk・Mono・7-segment・Dot 5×7・Silkscreen（初期）・Orbitron。Serif・Rounded（M PLUS 1p）・VT323・Share Tech Mono は試して不採用
 - ひらがなのフォントは DotGothic16（初期。ドット絵のゴシック体で、デジタルっぽい見た目にしたいというユーザーの希望）と M PLUS 1p。Google Fonts でかなを持つもの（Palette Mosaic・Stick・Monomaniac One・Murecho・Rampart One・Train One・Rock 3D）も見比べたが、デジタルっぽいのは DotGothic16 だけだった。Moirai One・Zen Dots はかなを持たない
 
