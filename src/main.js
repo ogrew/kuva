@@ -15,7 +15,7 @@ const CONFIG = {
   cellAspect: 4,  // 1マスの高さの比率（ASPECTS の番号）。高さ = 幅 × 比率。4 = 1:1
   K: 7,           // 状態数 = パレット色数
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
-  gps: 12,        // 世代/秒（即時反映）
+  gps: 15,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
   direction: 'all', // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'（即時反映）
   flatRatio: 0,   // 塗りつぶし：元の位置にないタイルのうち、一色で塗る割合（0 = 塗らない。即時反映）
@@ -324,7 +324,7 @@ const cDir = list(f2, 'direction', 'Direction', { 'All': 'all', 'Down': 'down', 
 onLive(cDir, 'direction');
 tip(cDir, 'All: each region flows its own way (changes now and then with Region tempo)\nOthers: every region flows that way');
 tip(onLive(num(f2, 'chaos', 'Chaos', 0, 1, 0.01), 'chaos'), 'Share of fully random entries mixed into the rule tables');
-tip(num(f2, 'gps', 'Speed', 0.5, 60, 0.5), 'Generations per second'); // 再生ループが毎フレーム読む
+tip(num(f2, 'gps', 'Speed', 0.5, 48, 0.5), 'Generations per second'); // 再生ループが毎フレーム読む
 
 // Render（描画だけに効く。作り直し不要）
 const f3 = pane.addFolder({ title: 'Render' });
