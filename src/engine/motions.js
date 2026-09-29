@@ -110,11 +110,11 @@ function stepLines(g, sim, prev, next, flow) {
     const raw = t <= j;
     for (let i = 0, c = start + t * dt; i < lineLen; i++, c += di) {
       const u = c - up;
-      // 上流の境界を部分的に開く。4セルの帯を24世代保ち、点状のちらつきを避ける（帯の幅は大きなマスでも基本のマスで数える）。
+      // 上流の境界を部分的に開く。行の幅を4等分した帯ごとに、24世代保って開閉を決める（点状のちらつきを避ける。大きなマスの領域は大きなマスの数で4等分）。
       // 写真を復元している最中は写真を優先する。画面外にはつながない。
       if (flow && t === 0 && !raw && sim.P.leakEnabled && sim.P.leak > 0) {
         const outside = dir === 0 ? y > 0 : dir === 1 ? y + h < sim.rows : dir === 2 ? x > 0 : x + w < cols;
-        const open = hash(sim.P.seed, g.index, Math.floor((i * sc) / 4), Math.floor(sim.gen / 24)) / 4294967296 < sim.P.leak;
+        const open = hash(sim.P.seed, g.index, Math.floor(i * 4 / lineLen), Math.floor(sim.gen / 24)) / 4294967296 < sim.P.leak;
         if (outside && open) {
           const n = c - dt1;
           ns[c] = sim.boundary.state[n]; nr[c] = sim.boundary.src[n];

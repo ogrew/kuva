@@ -21,7 +21,8 @@ test('分裂・合体：タイルを保ち、隙間・重複を作らず、未�
   for (let i = 0; i < 30; i++) s.step();
   for (let i = 0; i < 200; i++) {
     const before = s.regions.slice(), src = s.src.slice(), state = s.cur.state.slice();
-    s.topologyWait = 1;
+    const g = s.regions[i % s.regions.length];
+    g.topoWait = 1;
     evolveRegions(s);
     checkCoverage(s);
     assert.deepEqual(s.src, src);
@@ -83,6 +84,28 @@ test('漏れ：4方向とも隣のタイルが入口に入り、画面端は循�
   }
 });
 
+test('漏れ：入口を行の幅の4等分で開閉し、帯の中はそろう', () => {
+  const s = new Simulation({ ...base, topology: false, leak: 0.5, direction: 'down', ruleMorph: false, regionRules: false, pull: 0, chaos: 0, switchProb: 0 }, fakeIO(64, 48));
+  const prev = s.src.slice();
+  s.step();
+  let open = 0, closed = 0;
+  for (const g of s.regions) {
+    if (g.y === 0) continue;
+    const bands = [[], [], [], []];
+    for (let i = 0; i < g.w; i++) {
+      const c = g.y * s.cols + g.x + i;
+      const leaked = s.src[c] === prev[c - s.cols];
+      if (!leaked) assert.equal(s.src[c], prev[c + (g.h - 1) * s.cols]);
+      bands[Math.floor(i * 4 / g.w)].push(leaked);
+    }
+    for (const b of bands) if (b.length) {
+      assert.ok(b.every(v => v === b[0]), '帯の中は全部開くか全部閉じる');
+      b[0] ? open++ : closed++;
+    }
+  }
+  assert.ok(open > 0 && closed > 0);
+});
+
 test('漏れ：×2テンポでも領域の走査順で結果が変わらない', () => {
   const P = { ...base, topology: false, tempo: true, tempoFast: 0, tempoSlow: 0, inject: true, patFrac: 1, patMinWidth: 4 };
   const a = new Simulation(P, fakeIO(60, 40)), b = new Simulation(P, fakeIO(60, 40));
@@ -105,24 +128,44 @@ test('漏れ：OFFなら割合にかかわらず従来と同じ、再ONで割合
   assert.equal(a.P.leak, 0.6);
 });
 
-test('変化の間隔：変更は残り時間に反映され、同じ操作なら同じ結果', () => {
+test('変化の間隔：変更は領域ごとの残り時間に反映され、同じ操作なら同じ結果', () => {
   const run = () => {
     const s = new Simulation({ ...base, topologyInterval: 48 }, fakeIO(64, 48));
     for (let i = 0; i < 10; i++) s.step();
-    const wait = s.topologyWait;
+    const waits = s.regions.map(g => g.topoWait);
     s.set('topologyInterval', 96);
-    assert.equal(s.topologyWait, wait * 2);
+    assert.deepEqual(s.regions.map(g => g.topoWait), waits.map(w => w * 2));
     s.set('topologyInterval', 12);
     for (let i = 0; i < 180; i++) {
       if (i === 30) s.set('leakEnabled', false);
       if (i === 80) s.set('leakEnabled', true);
       s.step();
-      assert.ok(s.topologyWait >= 1 && s.topologyWait <= 18);
+      for (const g of s.regions) if (g.started) assert.ok(g.topoWait >= 1 && g.topoWait <= 18);
     }
     assert.ok(s.topologyEvents.split + s.topologyEvents.merge >= 10);
     return { rects: rects(s), cur: s.cur };
   };
   assert.deepEqual(run(), run());
+});
+
+test('分裂・合体：領域ごとのタイミングで、同じ世代に複数か所が組み替わる', () => {
+  const s = new Simulation({ ...base, topologyInterval: 12 }, fakeIO(64, 48));
+  let multi = 0;
+  for (let i = 0; i < 200; i++) {
+    const n = s.topologyEvents.split + s.topologyEvents.merge;
+    s.step();
+    checkCoverage(s);
+    if (s.topologyEvents.split + s.topologyEvents.merge - n >= 2) multi++;
+  }
+  assert.ok(multi > 0);
+});
+
+test('分裂・合体：ON/OFFで他の乱数系列を変えない（組み替えが起きる前は同じ映像）', () => {
+  const a = new Simulation({ ...base, leakEnabled: false, topologyInterval: 240 }, fakeIO(48, 36));
+  const b = new Simulation({ ...base, leakEnabled: false, topology: false }, fakeIO(48, 36));
+  for (let i = 0; i < 100; i++) { a.step(); b.step(); }
+  assert.equal(a.topologyEvents.split + a.topologyEvents.merge, 0);
+  assert.deepEqual(a.cur, b.cur);
 });
 
 test('Staggerと分裂・合体：開始待ちの領域を保ち、開始済みの領域を再び待たせない', () => {

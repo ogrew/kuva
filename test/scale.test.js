@@ -114,7 +114,14 @@ test('大きなマス：分裂した子は親の倍率を引き継ぎ、大き�
   let splits = 0, merges = 0;
   for (let n = 0; n < 150; n++) {
     const before = s.regions.slice(), ev = { ...s.topologyEvents };
-    s.topologyWait = 1;
+    // 1回に1つの領域だけが組み替えを試すようにする（タイマーは領域ごと。step() の中では組み替えない）
+    const started = s.regions.filter((g) => g.started);
+    for (const g of s.regions) g.topoWait = 1e9;
+    const target = started[n % started.length];
+    target.topoWait = 1;
+    // 倍率の違う領域の合体直後は、進むまで（最大 s 世代）中がそろっていない。そろっている親だけ確かめる
+    let aligned = true;
+    try { checkBlocks(s, [target]); } catch { aligned = false; }
     evolveRegions(s);
     const removed = before.filter((g) => !s.regions.includes(g)), added = s.regions.filter((g) => !before.includes(g));
     if (s.topologyEvents.split > ev.split) {
@@ -125,7 +132,7 @@ test('大きなマス：分裂した子は親の倍率を引き継ぎ、大き�
         if (g.scale === a.scale) { assert.equal((g.x - a.x) % a.scale, 0); assert.equal((g.y - a.y) % a.scale, 0); splits++; }
       }
       // 分裂の直後（1世代も進めていない）でも、子の中がそろっている
-      checkBlocks(s, added.filter((g) => g.scale === a.scale));
+      if (aligned) checkBlocks(s, added.filter((g) => g.scale === a.scale));
     } else if (s.topologyEvents.merge > ev.merge) {
       const big = removed[0].w * removed[0].h >= removed[1].w * removed[1].h ? removed[0] : removed[1];
       assert.equal(added[0].bigU, big.bigU); assert.equal(added[0].bigV, big.bigV);
