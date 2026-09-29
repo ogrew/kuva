@@ -14,10 +14,11 @@ function checkBlocks(s) {
     if (k === 1) continue;
     for (let by = g.y; by < g.y + g.h; by += k) for (let bx = g.x; bx < g.x + g.w; bx += k) {
       const c = by * cols + bx, ox = src[c] % cols, oy = Math.floor(src[c] / cols);
+      assert.ok(ox + k <= cols && oy + k <= rows, '大きなタイルはグリッドからはみ出さない');
       for (let y = by; y < Math.min(by + k, g.y + g.h); y++) for (let x = bx; x < Math.min(bx + k, g.x + g.w); x++) {
         const i = y * cols + x;
         assert.equal(st[i], st[c]);
-        assert.equal(src[i], Math.min(rows - 1, oy + y - by) * cols + Math.min(cols - 1, ox + x - bx));
+        assert.equal(src[i], (oy + y - by) * cols + ox + x - bx);
       }
     }
   }
@@ -87,4 +88,21 @@ test('大きなマス：割合 0 に戻すと、すべての領域が倍率 1 �
   for (let i = 0; i < 30; i++) s.step();
   assert.ok(s.regions.every((g) => g.scale === 1));
   assert.ok(big.some((g) => { for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) if (s.cur.mask[y * s.cols + x]) return true; return false; }));
+});
+
+test('大きなマスの半分ずつの色：大きなマスを1マスとして解析したものと同じ', async () => {
+  const { tileHalves, blockHalves } = await import('../src/engine/flat.js');
+  const { analyze } = await import('../src/engine/analyze.js');
+  // 1マス = 2×2 px の画像（24×16 マス）と、同じ画像を 1マス = 4×4 px（12×8 マス）で見たもの
+  const W = 48, H = 32, data = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) { data[i * 4] = (i * 37) % 251; data[i * 4 + 1] = (i * 91) % 241; data[i * 4 + 2] = (i * 13) % 239; }
+  const io1 = { cols: 24, rows: 16, Ax: 2, Ay: 2, analysis: { data, stride: W } };
+  const io2 = { cols: 12, rows: 8, Ax: 4, Ay: 4, analysis: { data, stride: W } };
+  const P = { K: 4, kmeansSamples: 1000, kmeansIter: 2, repsPerClass: 2 };
+  const { mean } = analyze(P, io1, () => 0.5);
+  const b = blockHalves({ cols: 24, rows: 16, mean }, tileHalves(io1), 2), t = tileHalves(io2);
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 12; x++) {
+    const o1 = ((y * 2) * 24 + x * 2) * 24, o2 = (y * 12 + x) * 24;
+    for (let k = 0; k < 24; k++) assert.ok(Math.abs(b[o1 + k] - t[o2 + k]) < 1e-3, `(${x}, ${y}) の ${k}`);
+  }
 });

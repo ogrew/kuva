@@ -83,7 +83,8 @@ export class Simulation {
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
     this.cw = io.cw ?? 1; this.ch = io.ch ?? 1;
     // 大きなマスの解析（倍率ごと）。最初に使うときに作る（乱数は使わないので、いつ作っても同じ）
-    this.scales = { 1: { cls: this.cls, reps: this.reps } };
+    this.scales = { 1: { cls: this.cls, reps: this.reps, mean: this.mean } };
+    this.scaleVersion = 0; // 領域の倍率が変わるたびに増える（描画側が作り直しに使う）
     this.regions = subdivide(P, cols, rows, rng, this.cw, this.ch)
       .map(([x, y, w, h], r) => this.createRegion(x, y, w, h, r));
     this.nextRegionId = this.regions.length;
@@ -131,7 +132,7 @@ export class Simulation {
   // 領域の倍率を決め直す。変わったら写真の流し込みは打ち切り、模様は種から置き直す（次の世代から反映）
   rescale(g) {
     const s = regionScale(this, g);
-    if (g.scale !== undefined && s !== g.scale) { g.inj = -1; g.patReset = true; }
+    if (g.scale !== undefined && s !== g.scale) { g.inj = -1; g.patReset = true; this.scaleVersion++; }
     g.scale = s;
   }
 

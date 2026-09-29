@@ -13,11 +13,11 @@ export const SCALE_LIST = [1, ...BIG_SCALES];
  * 倍率 s の解析。すべてのマスについて「そこを左上とする s×s の平均色」（グリッドの外は含めない）を
  * 全体のパレットで分類する。領域の位置が s の倍数でなくても、どの大きなマスにも分類がある。
  * 代表タイルは、s の倍数の位置にある大きなマスの中から、状態ごとにハッシュの小さい順に選ぶ。
- * 戻り値 { cls, reps }（cls・reps の形は倍率 1 のものと同じ。reps はタイルの左上のマスの番号）
+ * 戻り値 { cls, reps, mean }（形は倍率 1 のものと同じ。reps はタイルの左上のマスの番号、mean は s×s の平均色）
  */
 export function analyzeScale(sim, s) {
   const { cols, rows, mean, K } = sim, cen = sim.centers, N = cols * rows;
-  const cls = new Uint8Array(N);
+  const cls = new Uint8Array(N), bmean = new Float32Array(N * 3);
   const cand = Array.from({ length: K }, () => []);
   // 積分画像（(cols+1)×(rows+1)、RGB）で s×s の和を求める
   const W1 = cols + 1, sat = new Float64Array(W1 * (rows + 1) * 3);
@@ -43,13 +43,14 @@ export function analyzeScale(sim, s) {
       }
       const i = y * cols + x;
       cls[i] = best;
+      bmean[i * 3] = r; bmean[i * 3 + 1] = g; bmean[i * 3 + 2] = b;
       if (x % s === 0 && y % s === 0 && x + s <= cols && y + s <= rows) cand[best].push([hash(sim.P.seed, i, s, 0x72657073), i]);
     }
   }
   const R = sim.P.repsPerClass;
   let reps = cand.map((c) => c.sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, R).map((e) => e[1]));
   // 空の状態は輝度が近い状態の代表を借りる（analyze と同じ）。大きなマスが1つもなければ倍率 1 の代表
-  if (reps.every((r) => !r.length)) return { cls, reps: sim.reps };
+  if (reps.every((r) => !r.length)) return { cls, reps: sim.reps, mean: bmean };
   reps = reps.map((r, k) => {
     if (r.length) return r;
     for (let d = 1; d < K; d++) {
@@ -58,7 +59,7 @@ export function analyzeScale(sim, s) {
     }
     return r;
   });
-  return { cls, reps: reps.map((r) => Int32Array.from(r)) };
+  return { cls, reps: reps.map((r) => Int32Array.from(r)), mean: bmean };
 }
 
 /**
@@ -78,8 +79,10 @@ export function regionScale(sim, g) {
 }
 
 /**
- * 大きなマスの左上に置いた値を、中の各マスに書き写す。タイルは「左上のタイル＋中の位置」
- * （グリッドの端からはみ出す分は端のマスで止める）。模様は大きなマスには重ねない
+ * 大きなマスの左上に置いた値を、中の各マスに書き写す。タイルは「左上のタイル＋中の位置」。
+ * 大きなタイルがグリッドからはみ出さないよう、左上は右端・下端から s マス以内に寄せる
+ * （描画は「描くタイル − 中の位置」で大きなタイルの左上を求めるので、中の各マスで必ず同じ左上になるように）。
+ * 模様は大きなマスには重ねない
  */
 export function fillBlocks(g, sim, next, s) {
   const { cols, rows } = sim, ns = next.state, nr = next.src, nm = next.mask;
@@ -87,7 +90,8 @@ export function fillBlocks(g, sim, next, s) {
     const ey = Math.min(s, g.y + g.h - by);
     for (let bx = g.x; bx < g.x + g.w; bx += s) {
       const ex = Math.min(s, g.x + g.w - bx);
-      const c = by * cols + bx, st = ns[c], o = nr[c], ox = o % cols, oy = (o - ox) / cols;
+      const c = by * cols + bx, st = ns[c], o = nr[c];
+      const ox = Math.min(o % cols, Math.max(0, cols - s)), oy = Math.min(Math.floor(o / cols), Math.max(0, rows - s));
       for (let dy = 0; dy < ey; dy++) {
         const ty = Math.min(rows - 1, oy + dy) * cols;
         for (let dx = 0; dx < ex; dx++) {
@@ -97,4 +101,20 @@ export function fillBlocks(g, sim, next, s) {
       }
     }
   }
+}
+
+/**
+ * 描く位置ごとの倍率と、大きなマスの中の位置（描画だけに使う）。
+ * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 5
+ */
+export function blockCodes(sim) {
+  const { cols } = sim, out = new Uint8Array(sim.cols * sim.rows);
+  for (const g of sim.regions) {
+    const s = g.scale, li = SCALE_LIST.indexOf(s);
+    if (li <= 0) continue;
+    for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
+      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 5;
+    }
+  }
+  return out;
 }

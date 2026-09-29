@@ -63,6 +63,43 @@ export function tileHalves(io) {
 }
 
 /**
+ * 大きなマス（s×s、s は偶数）の「半分ずつの平均色」。すべてのマスについて、そこを左上とする大きなマスで作る。
+ * s が偶数なので、横・縦の半分は基本のマスがまるごと入り、斜めの線は対角のマスの斜めの線と重なる
+ * → 基本のマスの平均色（sim.mean）と半分ずつの色（halves）から、面積の重みで正確に求まる。
+ * 戻り値の形は tileHalves と同じ。グリッドの外は含めない
+ */
+export function blockHalves(sim, halves, s) {
+  const { cols, rows, mean } = sim, N = cols * rows, S = HALVES * 3, out = new Float32Array(N * S);
+  const acc = new Float64Array(HALVES * 4), h2 = s / 2;
+  const add = (h, src, o, w) => { acc[h * 4] += src[o] * w; acc[h * 4 + 1] += src[o + 1] * w; acc[h * 4 + 2] += src[o + 2] * w; acc[h * 4 + 3] += w; };
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    acc.fill(0);
+    let R = 0, G = 0, B = 0, n = 0;
+    for (let dy = 0; dy < s && y + dy < rows; dy++) for (let dx = 0; dx < s && x + dx < cols; dx++) {
+      const i = (y + dy) * cols + x + dx, m = i * 3, hb = i * S;
+      R += mean[m]; G += mean[m + 1]; B += mean[m + 2]; n++;
+      add(dy < h2 ? 0 : 1, mean, m, 1);
+      add(dx < h2 ? 2 : 3, mean, m, 1);
+      // ＼：4 = 左下（x < y）、5 = 右上。対角のマスは、そのマスの斜めの半分ずつ
+      if (dx < dy) add(4, mean, m, 1); else if (dx > dy) add(5, mean, m, 1);
+      else { add(4, halves, hb + 12, 0.5); add(5, halves, hb + 15, 0.5); }
+      // ／：6 = 左上（x + y < 1）、7 = 右下
+      const t = dx + dy - (s - 1);
+      if (t < 0) add(6, mean, m, 1); else if (t > 0) add(7, mean, m, 1);
+      else { add(6, halves, hb + 18, 0.5); add(7, halves, hb + 21, 0.5); }
+    }
+    const o = (y * cols + x) * S;
+    for (let h = 0; h < HALVES; h++) {
+      const w = acc[h * 4 + 3];
+      out[o + h * 3] = w ? acc[h * 4] / w : R / n;
+      out[o + h * 3 + 1] = w ? acc[h * 4 + 1] / w : G / n;
+      out[o + h * 3 + 2] = w ? acc[h * 4 + 2] / w : B / n;
+    }
+  }
+  return out;
+}
+
+/**
  * 描く位置ごとの割り方（SPLITS の番号）。領域ごとに hash(seed, 領域) < amount なら2色塗りにし、
  * 割り方は領域内の元写真で「2つの半分の色の差の2乗」の合計がいちばん大きいもの（同じなら SPLITS の順で先のもの）。
  * amount を上げると2色塗りの領域が増えるだけで、入れ替わらない。乱数は使わない
@@ -93,12 +130,13 @@ export function splitKinds(sim, halves, amount) {
 }
 
 /**
- * sim = { cls, palette, mean, K, P: { seed } }
- * halves = tileHalves の結果（null なら2色塗りの層は作らない）
+ * sim = { cls, palette, mean, K, P: { seed } }（大きなマスなら cls・mean はその倍率のもの）
+ * halves = tileHalves・blockHalves の結果（null なら2色塗りの層は作らない）
+ * salt = タイルごとに選ぶときのハッシュに混ぜる値（倍率ごとに別の選び方にする。倍率 1 は 0）
  * 戻り値：FLAT_LAYERS 層ぶんのタイルごとの RGBA（Uint8Array、長さ = 層 × セル数 × 4）。
  * 0層目の A = 255 なら塗る、0 なら塗らない。1〜8層目は半分ずつの色（color = 'palette' ならパレットの近い色）
  */
-export function flatColors(sim, ratio, unit, color, halves = null) {
+export function flatColors(sim, ratio, unit, color, halves = null, salt = 0) {
   const { cls, palette, mean, K } = sim, N = cls.length, seed = sim.P.seed >>> 0;
   const out = new Uint8Array(FLAT_LAYERS * N * 4);
   if (!(ratio > 0)) return out;
@@ -110,7 +148,7 @@ export function flatColors(sim, ratio, unit, color, halves = null) {
     on = (s) => chosen.has(cls[s]);
   } else {
     const th = Math.min(1, ratio) * 4294967296;
-    on = (s) => hash(seed, s, 0x666C6174) < th;
+    on = (s) => hash(seed, s, 0x666C6174 + salt) < th;
   }
   // パレットのいちばん近い色
   const nearest = (r, g, b) => {
