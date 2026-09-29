@@ -35,23 +35,28 @@ export function evolveRegions(sim) {
   const canMerge = merges.length > 0 && rs.length > 2;
   if (!canSplit && !canMerge) return;
   const split = canSplit && (!canMerge || rng() < 0.5);
-  let removed, rects;
+  let removed, rects, from;
   if (split) {
     const a = splits[Math.floor(rng() * splits.length)];
     const vertical = a.w >= 2 * minX && (a.h < 2 * minY || rng() < (a.w * sim.cw > a.h * sim.ch ? 0.7 : 0.3));
     const length = vertical ? a.w : a.h, min = vertical ? minX : minY;
-    const cut = Math.max(min, Math.min(length - min, Math.round(length * (0.35 + rng() * 0.3))));
+    let cut = Math.max(min, Math.min(length - min, Math.round(length * (0.35 + rng() * 0.3))));
+    // 大きなマスの領域は、切る位置を倍率の倍数にそろえる（子は同じ倍率を引き継ぐので、大きなマスの並びがそのまま残る）
+    const s = a.scale, aligned = Math.round(cut / s) * s;
+    if (aligned >= min && aligned <= length - min) cut = aligned;
     rects = vertical ? [[a.x, a.y, cut, a.h], [a.x + cut, a.y, a.w - cut, a.h]]
       : [[a.x, a.y, a.w, cut], [a.x, a.y + cut, a.w, a.h - cut]];
     removed = [a];
+    from = a;
     sim.topologyEvents.split++;
   } else {
     const { a, b, rect } = merges[Math.floor(rng() * merges.length)];
     removed = [a, b]; rects = [rect];
+    from = a.w * a.h >= b.w * b.h ? a : b; // 大きなマスにするかは、面積の大きいほうから引き継ぐ
     sim.topologyEvents.merge++;
   }
   const added = rects.map(rect => {
-    const g = sim.createRegion(...rect, sim.nextRegionId++);
+    const g = sim.createRegion(...rect, sim.nextRegionId++, from);
     // 開始済みの領域だけを組み替える。Staggerで再び待たせない。
     g.started = true;
     if (g.rules) applyChaos(g.rules, sim.P.chaos);

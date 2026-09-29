@@ -106,7 +106,8 @@ export class Simulation {
   }
 
   // 初期領域と新しく生まれた領域で同じ初期化を使う。IDごとに独立した乱数。
-  createRegion(x, y, w, h, r) {
+  // from = 分裂・合体の元の領域。大きなマスにするかどうか（bigU・bigV）だけ引き継ぐ
+  createRegion(x, y, w, h, r, from = null) {
     const P = this.P;
     const g = { index: r, x, y, w, h, rng: mulberry32(hash(P.seed, r, 0x6B757661)) };
     // 模様のレイヤー：選ばれやすさ・置き直しの間隔・ルール。乱数は使わずハッシュ
@@ -115,8 +116,8 @@ export class Simulation {
     g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;
     g.patRule = 0;
     g.startU = hash(P.seed, r, 0x73746172) / 4294967296;
-    g.bigU = hash(P.seed, r, 0x62696775) / 4294967296; // 大きなマスにするか
-    g.bigV = hash(P.seed, r, 0x62696776) / 4294967296; // 〃 倍率
+    g.bigU = from ? from.bigU : hash(P.seed, r, 0x62696775) / 4294967296; // 大きなマスにするか
+    g.bigV = from ? from.bigV : hash(P.seed, r, 0x62696776) / 4294967296; // 〃 倍率
     g.started = false;
     g.patT = 0;
     g.motion = g.rng() < P.skipProb ? 'still' : P.motion;

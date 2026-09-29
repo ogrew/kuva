@@ -7,9 +7,9 @@ const base = { seed: 7, K: 6, chaos: 0.1, skipProb: 0, bigFrac: 1 };
 const io = () => fakeIO(120, 90);
 
 // 大きなマスの中の各マスが、左上と同じ状態・「左上のタイル＋中の位置」のタイルを持つ
-function checkBlocks(s) {
+function checkBlocks(s, regions = s.regions) {
   const { cols, rows } = s, st = s.cur.state, src = s.src;
-  for (const g of s.regions) {
+  for (const g of regions) {
     const k = g.scale;
     if (k === 1) continue;
     for (let by = g.y; by < g.y + g.h; by += k) for (let bx = g.x; bx < g.x + g.w; bx += k) {
@@ -105,4 +105,33 @@ test('大きなマスの半分ずつの色：大きなマスを1マスとして�
     const o1 = ((y * 2) * 24 + x * 2) * 24, o2 = (y * 12 + x) * 24;
     for (let k = 0; k < 24; k++) assert.ok(Math.abs(b[o1 + k] - t[o2 + k]) < 1e-3, `(${x}, ${y}) の ${k}`);
   }
+});
+
+test('大きなマス：分裂した子は親の倍率を引き継ぎ、大きなマスの並びがそのまま残る。合体は面積の大きいほうから', async () => {
+  const { evolveRegions } = await import('../src/engine/topology.js');
+  const s = new Simulation({ ...base, topology: true }, io());
+  for (let i = 0; i < 20; i++) s.step();
+  let splits = 0, merges = 0;
+  for (let n = 0; n < 150; n++) {
+    const before = s.regions.slice(), ev = { ...s.topologyEvents };
+    s.topologyWait = 1;
+    evolveRegions(s);
+    const removed = before.filter((g) => !s.regions.includes(g)), added = s.regions.filter((g) => !before.includes(g));
+    if (s.topologyEvents.split > ev.split) {
+      const [a] = removed;
+      for (const g of added) {
+        // 小さくなって大きなマスが4つ並ばない子だけは、小さい倍率に落ちてよい
+        if (Math.ceil(Math.min(g.w, g.h) / a.scale) >= s.P.bigMinBlocks) assert.equal(g.scale, a.scale);
+        if (g.scale === a.scale) { assert.equal((g.x - a.x) % a.scale, 0); assert.equal((g.y - a.y) % a.scale, 0); splits++; }
+      }
+      // 分裂の直後（1世代も進めていない）でも、子の中がそろっている
+      checkBlocks(s, added.filter((g) => g.scale === a.scale));
+    } else if (s.topologyEvents.merge > ev.merge) {
+      const big = removed[0].w * removed[0].h >= removed[1].w * removed[1].h ? removed[0] : removed[1];
+      assert.equal(added[0].bigU, big.bigU); assert.equal(added[0].bigV, big.bigV);
+      merges++;
+    }
+    s.step();
+  }
+  assert.ok(splits > 0 && merges > 0);
 });
