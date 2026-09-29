@@ -10,7 +10,7 @@ import { loadBitmap, gridLayout, paddedCanvas, drawPadded, scaledCanvas, pixelsO
 import { Camera } from './camera.js';
 import { Renderer } from './render/renderer.js';
 import { RegionBorders } from './render/region-borders.js';
-import { DIGIT_FONTS, GLYPH_SIZE, makeGlyphs } from './render/glyphs.js';
+import { DIGIT_FONTS, GLYPH_SETS, GLYPH_SIZE, KANA_FONTS, makeGlyphs } from './render/glyphs.js';
 
 const CONFIG = {
   seed: 12345,
@@ -44,9 +44,11 @@ const CONFIG = {
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
-  digits: false,  // マスに数字を重ねる（正方形のマスのときだけ。描画だけに効く）
-  digitBy: 'lum', // 数字の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
+  digits: false,  // マスに文字を重ねる（GUI では Glyphs。正方形のマスのときだけ。描画だけに効く）
+  digitBy: 'lum', // 番号 0〜9 の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
+  glyphSet: 'digits', // 番号に割り当てる文字（GLYPH_SETS）：'digits'（0〜9） | 'kana'（あ〜こ）
   digitFont: 'silkscreen', // 数字のフォント（DIGIT_FONTS）
+  kanaFont: 'dotgothic',   // ひらがなのフォント（KANA_FONTS）
   digitColor: '#ffffff', // 数字の色（全マス共通）
   digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
@@ -207,7 +209,7 @@ function updateDigitLayers() {
   }
 }
 
-// 数字：正方形のマス（Aspect = 1）のときだけ描く。文字の形はフォントを変えたときだけ作り直す
+// 文字：正方形のマス（Aspect = 1）のときだけ描く。文字の形は文字の種類・フォントを変えたときだけ作り直す
 const isSquare = () => ASPECTS[Math.round(CONFIG.cellAspect)]?.p === 1;
 let glyphFont = '', glyphSeq = 0;
 function updateDigits() {
@@ -217,9 +219,11 @@ function updateDigits() {
   const hex = parseInt(CONFIG.digitColor.slice(1, 7), 16);
   renderer.setDigitStyle(on, [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255], mask);
   if (on) updateDigitLayers();
-  if (on && glyphFont !== CONFIG.digitFont) {
-    const font = glyphFont = CONFIG.digitFont, seq = ++glyphSeq;
-    makeGlyphs(font).then((data) => { if (seq === glyphSeq) renderer.setGlyphs(data, GLYPH_SIZE); });
+  const set = CONFIG.glyphSet, font = set === 'kana' ? CONFIG.kanaFont : CONFIG.digitFont;
+  if (on && glyphFont !== `${set}/${font}`) {
+    glyphFont = `${set}/${font}`;
+    const seq = ++glyphSeq;
+    makeGlyphs(set, font).then((data) => { if (seq === glyphSeq) renderer.setGlyphs(data, GLYPH_SIZE); });
   }
 }
 
@@ -546,35 +550,47 @@ tip(cFlat, 'Share of carried cells (photo tiles away from their original place) 
 tip(cFlatSub[0], 'Per tile: decide for each photo tile\nPer color: paint all tiles of the same K color together');
 tip(cFlatSub[1], 'Palette: the K color the tile belongs to\nMean: the tile\'s own average color');
 tip(cFlatSub[2], 'Share of regions painted in two colors: each tile is halved and each half gets its own color. The cut (horizontal, vertical or either diagonal) is picked per region to fit the photo. 0 = off');
-const cDigits = f3.addBinding(CONFIG, 'digits', { label: 'Digits' });
+const cDigits = f3.addBinding(CONFIG, 'digits', { label: 'Glyphs' });
+const fontList = (fonts) => Object.fromEntries(Object.entries(fonts).map(([k, f]) => [f.label, k]));
 const cDigitSub = [
   list(f3, 'digitBy', '　└ By', { 'Brightness': 'lum', 'State': 'state' }),
-  list(f3, 'digitFont', '　└ Font', Object.fromEntries(Object.entries(DIGIT_FONTS).map(([k, f]) => [f.label, k]))),
+  list(f3, 'glyphSet', '　└ Set', Object.fromEntries(Object.entries(GLYPH_SETS).map(([k, g]) => [g.label, k]))),
+  // フォントは文字の種類ごとに別の項目にし、使わないほうは隠す（Tweakpane は選択肢をあとから変えられない）
+  list(f3, 'digitFont', '　└ Font', fontList(DIGIT_FONTS)),
+  list(f3, 'kanaFont', '　└ Font', fontList(KANA_FONTS)),
   f3.addBinding(CONFIG, 'digitColor', { label: '　└ Color' }),
 ];
-// 表示する数字：0〜9 の切り替えを横に並べた1行（Tweakpane にない部品なので、同じ見た目の行を作って Color の下に入れる）
+// 表示する文字：0〜9 番の切り替えを横に並べた1行（Tweakpane にない部品なので、同じ見た目の行を作って Color の下に入れる）
 const cDigitShow = document.createElement('div');
 cDigitShow.className = 'tp-lblv digit-show';
-cDigitShow.title = 'Digits to draw. Cells whose digit is off show the photo only';
+cDigitShow.title = 'Glyphs to draw. Cells whose glyph is off show the photo only';
 cDigitShow.innerHTML = '<div class="tp-lblv_l">　└ Show</div><div class="tp-lblv_v"></div>';
 for (let d = 0; d < 10; d++) {
   const el = document.createElement('label');
-  el.innerHTML = `<input type="checkbox"${CONFIG.digitShow.includes(d) ? ' checked' : ''}><span>${d}</span>`;
+  el.innerHTML = `<input type="checkbox"${CONFIG.digitShow.includes(d) ? ' checked' : ''}><span></span>`;
   el.querySelector('input').addEventListener('change', () => {
     CONFIG.digitShow = [...cDigitShow.querySelectorAll('input')].flatMap((e, i) => (e.checked ? [i] : []));
     updateDigits();
   });
   cDigitShow.lastChild.appendChild(el);
 }
-cDigitSub[2].element.after(cDigitShow);
-tip(cDigits, 'Square cells (Aspect ×1) only. Draws a digit 0–9 in each cell. Tiles of the same average color get the same digit, and it moves with the tile');
-tip(cDigitSub[0], 'Brightness: 10 steps by brightness, each digit about equally common (dark = 0)\nState: the K color the CA sees (ones digit when K > 10)');
-tip(cDigitSub[1], 'Font of the digits');
-tip(cDigitSub[2], 'Color of the digits (same for every cell)');
+cDigitSub[4].element.after(cDigitShow);
+tip(cDigits, 'Square cells (Aspect ×1) only. Draws one of 10 glyphs (0–9 or あ–こ) in each cell. Tiles of the same average color get the same glyph, and it moves with the tile');
+tip(cDigitSub[0], 'Brightness: 10 steps by brightness, each glyph about equally common (dark = 0 / あ)\nState: the K color the CA sees (ones digit when K > 10)');
+tip(cDigitSub[1], 'Digits: 0–9\nHiragana: あいうえおかきくけこ (0 → あ, 1 → い, …)');
+tip(cDigitSub[2], 'Font of the digits');
+tip(cDigitSub[3], 'Font of the hiragana');
+tip(cDigitSub[4], 'Color of the glyphs (same for every cell)');
 const refreshDigits = () => {
+  const show = isSquare() && CONFIG.digits, kana = CONFIG.glyphSet === 'kana';
   cDigits.hidden = !isSquare();
-  cDigitSub.forEach((c) => { c.hidden = !isSquare() || !CONFIG.digits; });
-  cDigitShow.hidden = !isSquare() || !CONFIG.digits;
+  cDigitSub.forEach((c) => { c.hidden = !show; });
+  cDigitSub[2].hidden = !show || kana;
+  cDigitSub[3].hidden = !show || !kana;
+  cDigitShow.hidden = !show;
+  // Show の見出しは今の文字の種類の文字
+  const chars = [...GLYPH_SETS[CONFIG.glyphSet].chars];
+  cDigitShow.querySelectorAll('span').forEach((e, i) => { e.textContent = chars[i]; });
 };
 [cDigits, ...cDigitSub].forEach((c) => c.on('change', () => { refreshDigits(); updateDigits(); }));
 cDigitSub[0].on('change', updateDigitLayers);
