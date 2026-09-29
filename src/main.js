@@ -30,7 +30,7 @@ const CONFIG = {
   inject: true,           // C：写真を流し込む（即時反映。流れるのときだけ効く）
   injectPeriod: 120,      // C：流し込みの周期（世代）（即時反映）
   topology: false,        // 領域の分裂・合体
-  topologyInterval: 48,   // 変化の間隔の中心値（世代）
+  topologyInterval: 80,   // 領域ごとの変化の間隔の中心値（世代）
   leakEnabled: false,     // 隣からの漏れ
   leak: 0.6,              // 境界の開放率（OFFでも保持）
   tempo: false,           // E：領域ごとのテンポ（即時反映）
@@ -408,10 +408,10 @@ const tempoName = () => {
 cTempoRange.forEach((c) => onLive(c, c.key, tempoName));
 tempoName();
 const cTopology = fx.addBinding(CONFIG, 'topology', { label: 'Split / merge' });
-const cTopologyInterval = num(fx, 'topologyInterval', '　└ Interval', 12, 600, 1);
+const cTopologyInterval = num(fx, 'topologyInterval', '　└ Interval', 12, 120, 1);
 onLive(cTopologyInterval, 'topologyInterval');
 tip(cTopology, 'Split or merge local regions, preserving photo tiles while changing boundaries and rules. Off freezes the current layout; R restores the initial layout');
-tip(cTopologyInterval, 'Generations between local changes (12–600). Varies from 0.5 to 1.5 times this value: 48 means 24–72 generations. Changes also scale the remaining wait');
+tip(cTopologyInterval, 'Generations between changes of each region (12–120). Each region waits 0.5 to 1.5 times this value: 80 means 40–120 generations, then splits itself or merges with a neighbor. Changes also scale the remaining waits');
 const cLeakEnabled = fx.addBinding(CONFIG, 'leakEnabled', { label: 'Region leak' });
 const cLeak = num(fx, 'leak', '　└ Amount', 0, 1, 0.05);
 onLive(cLeak, 'leak');

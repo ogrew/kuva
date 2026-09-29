@@ -1,4 +1,4 @@
-// 画面全体を作り直さず、一組の領域だけ分裂・合体する。
+// 画面全体を作り直さず、領域ごとのタイミングで分裂・合体する。
 import { hash, mulberry32 } from './rng.js';
 import { applyChaos } from './rules.js';
 import { MOTIONS } from './motions.js';
@@ -12,61 +12,85 @@ export function unionRect(a, b) {
   return null;
 }
 
-export function evolveRegions(sim) {
-  if (--sim.topologyWait > 0) return;
-  // 既存のルール・テンポ用乱数を消費しない。
-  const rng = mulberry32(hash(sim.P.seed, sim.topologyTick++, 0x73706c69));
-  const interval = Math.max(1, Math.round(sim.P.topologyInterval));
+// 領域ごとの乱数（topoN 回目）。既存のルール・テンポ用乱数を消費しない。
+function topologyRng(P, g) {
+  return mulberry32(hash(P.seed, g.index, g.topoN++, 0x73706c69));
+}
+
+// 次に組み替えを試すまでの世代数：間隔の0.5〜1.5倍
+export function topologyWait(P, rng) {
+  const interval = Math.max(1, Math.round(P.topologyInterval));
   const minWait = Math.max(1, Math.round(interval * 0.5));
   const maxWait = Math.max(minWait, Math.round(interval * 1.5));
-  sim.topologyWait = minWait + Math.floor(rng() * (maxWait - minWait + 1));
-  const rs = sim.regions;
+  return minWait + Math.floor(rng() * (maxWait - minWait + 1));
+}
+
+// 新しい領域の最初の待ち時間（createRegion から。乱数を使うのはこの領域の系列だけ）
+export function initTopology(sim, g) {
+  g.topoN = 0;
+  g.topoWait = topologyWait(sim.P, topologyRng(sim.P, g));
+}
+
+// 崩れ始めた領域ごとに待ち時間を減らし、0 になった領域が自分の分裂か隣との合体を試す。
+// 同じ世代に組み替えた領域（消えた・新しくできた）は、その世代ではもう触らない。
+export function evolveRegions(sim) {
+  const P = sim.P;
   const long = Math.max(sim.cols * sim.cw, sim.rows * sim.ch);
-  const minX = Math.max(2, Math.round(sim.P.minRegionFrac * long / sim.cw));
-  const minY = Math.max(2, Math.round(sim.P.minRegionFrac * long / sim.ch));
-  const splits = rs.filter(g => g.started && (g.w >= minX * 2 || g.h >= minY * 2));
-  const merges = [];
-  for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
-    if (!rs[i].started || !rs[j].started) continue;
-    const rect = unionRect(rs[i], rs[j]);
-    if (rect) merges.push({ a: rs[i], b: rs[j], rect });
-  }
-  const canSplit = splits.length > 0 && rs.length < sim.maxRegions;
-  const canMerge = merges.length > 0 && rs.length > 2;
-  if (!canSplit && !canMerge) return;
-  const split = canSplit && (!canMerge || rng() < 0.5);
-  let removed, rects;
-  if (split) {
-    const a = splits[Math.floor(rng() * splits.length)];
-    const vertical = a.w >= 2 * minX && (a.h < 2 * minY || rng() < (a.w * sim.cw > a.h * sim.ch ? 0.7 : 0.3));
-    const length = vertical ? a.w : a.h, min = vertical ? minX : minY;
-    const cut = Math.max(min, Math.min(length - min, Math.round(length * (0.35 + rng() * 0.3))));
-    rects = vertical ? [[a.x, a.y, cut, a.h], [a.x + cut, a.y, a.w - cut, a.h]]
-      : [[a.x, a.y, a.w, cut], [a.x, a.y + cut, a.w, a.h - cut]];
-    removed = [a];
-    sim.topologyEvents.split++;
-  } else {
-    const { a, b, rect } = merges[Math.floor(rng() * merges.length)];
-    removed = [a, b]; rects = [rect];
-    sim.topologyEvents.merge++;
-  }
-  const added = rects.map(rect => {
-    const g = sim.createRegion(...rect, sim.nextRegionId++);
-    // 開始済みの領域だけを組み替える。Staggerで再び待たせない。
-    g.started = true;
-    if (g.rules) applyChaos(g.rules, sim.P.chaos);
-    MOTIONS[g.motion].rulesChanged?.(g);
-    const rules = sim.P.patRules;
-    g.patRule = rules.length ? rules[Math.floor(g.patRuleU * rules.length)] : 0;
-    g.patReset = true;
-    // 写真タイル・CA状態は保ち、古い境界に沿った模様だけ消す。
-    for (let y = g.y; y < g.y + g.h; y++) {
-      const a = y * sim.cols + g.x;
-      sim.cur.mask.fill(0, a, a + g.w);
-      sim.nxt.mask.fill(0, a, a + g.w);
+  const minX = Math.max(2, Math.round(P.minRegionFrac * long / sim.cw));
+  const minY = Math.max(2, Math.round(P.minRegionFrac * long / sim.ch));
+  const touched = new Set();
+  let rs = sim.regions, changed = false;
+  for (const a of sim.regions) {
+    if (!a.started || touched.has(a)) continue;
+    if (--a.topoWait > 0) continue;
+    const rng = topologyRng(P, a);
+    a.topoWait = topologyWait(P, rng);
+    const canSplit = (a.w >= minX * 2 || a.h >= minY * 2) && rs.length < sim.maxRegions;
+    const merges = [];
+    if (rs.length > 2) for (const b of rs) {
+      if (b === a || !b.started || touched.has(b)) continue;
+      const rect = unionRect(a, b);
+      if (rect) merges.push({ b, rect });
     }
-    return g;
-  });
-  sim.regions = rs.filter(g => !removed.includes(g)).concat(added);
+    if (!canSplit && !merges.length) continue;
+    const split = canSplit && (!merges.length || rng() < 0.5);
+    let removed, rects;
+    if (split) {
+      const vertical = a.w >= 2 * minX && (a.h < 2 * minY || rng() < (a.w * sim.cw > a.h * sim.ch ? 0.7 : 0.3));
+      const length = vertical ? a.w : a.h, min = vertical ? minX : minY;
+      const cut = Math.max(min, Math.min(length - min, Math.round(length * (0.35 + rng() * 0.3))));
+      rects = vertical ? [[a.x, a.y, cut, a.h], [a.x + cut, a.y, a.w - cut, a.h]]
+        : [[a.x, a.y, a.w, cut], [a.x, a.y + cut, a.w, a.h - cut]];
+      removed = [a];
+      sim.topologyEvents.split++;
+    } else {
+      const { b, rect } = merges[Math.floor(rng() * merges.length)];
+      removed = [a, b]; rects = [rect];
+      sim.topologyEvents.merge++;
+    }
+    const added = rects.map(rect => {
+      const g = sim.createRegion(...rect, sim.nextRegionId++);
+      // 開始済みの領域だけを組み替える。Staggerで再び待たせない。
+      g.started = true;
+      if (g.rules) applyChaos(g.rules, P.chaos);
+      MOTIONS[g.motion].rulesChanged?.(g);
+      const rules = P.patRules;
+      g.patRule = rules.length ? rules[Math.floor(g.patRuleU * rules.length)] : 0;
+      g.patReset = true;
+      // 写真タイル・CA状態は保ち、古い境界に沿った模様だけ消す。
+      for (let y = g.y; y < g.y + g.h; y++) {
+        const c = y * sim.cols + g.x;
+        sim.cur.mask.fill(0, c, c + g.w);
+        sim.nxt.mask.fill(0, c, c + g.w);
+      }
+      touched.add(g);
+      return g;
+    });
+    for (const g of removed) touched.add(g);
+    rs = rs.filter(g => !removed.includes(g)).concat(added);
+    changed = true;
+  }
+  if (!changed) return;
+  sim.regions = rs;
   sim.makeInk();
 }

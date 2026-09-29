@@ -3,12 +3,12 @@
 import { mulberry32, hash } from './rng.js';
 import { analyze } from './analyze.js';
 import { makeRulePool, applyChaos } from './rules.js';
-import { evolveRegions } from './topology.js';
+import { evolveRegions, initTopology } from './topology.js';
 import { subdivide } from './regions.js';
 import { MOTIONS, PAT_RULES } from './motions.js';
 
 // 生成ロジックを変えたら上げる
-export const ENGINE_VERSION = 1;
+export const ENGINE_VERSION = 2;
 
 // E のテンポの段階：1世代あたりに進む回数。1 より大きいと1世代に複数回、1 未満なら 1/n 世代に1回
 export const TEMPOS = [2, 1, 1 / 2, 1 / 3, 1 / 4, 1 / 5];
@@ -54,7 +54,7 @@ export const ENGINE_DEFAULTS = {
   splitMin: 0.25, splitMax: 0.75,
   skipProb: 0.1,       // 領域を CA 処理しない確率（元写真がそのまま残る）
   topology: false,    // 局所的な分裂・合体
-  topologyInterval: 48, // 間隔の中心値（世代）。実際は0.5〜1.5倍
+  topologyInterval: 80, // 領域ごとの間隔の中心値（世代）。実際は0.5〜1.5倍
   leakEnabled: false, // 隣からの漏れ
   leak: 0.6,          // 流れの入口を隣の領域へ開く割合
   motion: 'flow',
@@ -84,8 +84,6 @@ export class Simulation {
     this.nextRegionId = this.regions.length;
     this.maxRegions = Math.max(16, this.regions.length * 2);
     this.topologyEvents = { split: 0, merge: 0 };
-    this.topologyTick = 0;
-    this.topologyWait = Math.max(1, Math.round(P.topologyInterval / 2));
 
     // 前の世代 / 次の世代。0世代は元写真そのもの（状態 = cls、タイル = 自分自身）
     const mk = () => ({ state: this.cls.slice(), src: Int32Array.from({ length: N }, (_, i) => i), mask: new Uint8Array(N) });
@@ -117,6 +115,8 @@ export class Simulation {
     g.trng = mulberry32(hash(P.seed, r, 0x74656D70));
     g.tempoPhase = Math.floor(g.trng() * 12);
     this.retime(g, false);
+    // 分裂・合体の待ち時間（領域ごと。乱数は hash(seed, 領域, 回数) の別系列）
+    initTopology(this, g);
     return g;
   }
 
@@ -136,8 +136,8 @@ export class Simulation {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'topologyInterval') {
       if (!Number.isFinite(value) || value < 1) throw new Error('変化の間隔は1以上の数値にしてください');
-      // 待ち時間の進捗を保ち、新しい間隔をすぐ反映する。
-      this.topologyWait = Math.max(1, Math.ceil(this.topologyWait * value / this.P.topologyInterval));
+      // 領域ごとの待ち時間の進捗を保ち、新しい間隔をすぐ反映する。
+      for (const g of this.regions) g.topoWait = Math.max(1, Math.ceil(g.topoWait * value / this.P.topologyInterval));
     }
     if (key === 'chaos') this.setChaos(value);
     else this.P[key] = value;
