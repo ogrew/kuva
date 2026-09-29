@@ -6,6 +6,7 @@ import { makeRulePool, applyChaos } from './rules.js';
 import { evolveRegions } from './topology.js';
 import { subdivide } from './regions.js';
 import { MOTIONS, PAT_RULES } from './motions.js';
+import { analyzeScale, regionScale } from './scale.js';
 
 // 生成ロジックを変えたら上げる
 export const ENGINE_VERSION = 1;
@@ -44,6 +45,8 @@ export const ENGINE_DEFAULTS = {
   patFrac: 0,          // 模様のレイヤーを重ねる領域の割合（0 = なし。GUI の初期値は main.js）
   patMinWidth: 24,     // 模様を重ねる領域の、行の長さ（マス）の最小。小さいと三角形が育たない
   patRules: [30, 90, 110, 150], // 模様に使うルール（PAT_RULES の番号）。領域ごとにこの中からハッシュで1つ選ぶ
+  bigFrac: 0,          // 大きなマス（2×2・3×3 マスを1マスとして計算する）にする領域の割合（0 = なし）
+  bigMinBlocks: 4,     // 大きなマスが短いほうの辺にこれだけ並ばない領域は、小さい倍率に落とす
   stagger: 0,          // 領域が崩れ始める世代のばらつき。領域ごとに 0〜stagger 世代目まで元写真のまま待つ（0 = 一斉に始まる）
   direction: 'all',    // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'。固定中は E の向き変更も効かない
   // 領域
@@ -74,11 +77,13 @@ export class Simulation {
     const rng = mulberry32(P.seed >>> 0);
 
     const a = analyze(P, io, rng);
-    this.palette = a.palette; this.cls = a.cls; this.reps = a.reps; this.mean = a.mean;
+    this.palette = a.palette; this.cls = a.cls; this.reps = a.reps; this.mean = a.mean; this.centers = a.centers;
     this.pool = makeRulePool(P.K, P.ruleCount, P.pull, rng);
 
     // 領域ごとに独立した乱数系列を持たせる（後で分裂・合体を足しても他の領域に影響しないように）
     this.cw = io.cw ?? 1; this.ch = io.ch ?? 1;
+    // 大きなマスの解析（倍率ごと）。最初に使うときに作る（乱数は使わないので、いつ作っても同じ）
+    this.scales = { 1: { cls: this.cls, reps: this.reps } };
     this.regions = subdivide(P, cols, rows, rng, this.cw, this.ch)
       .map(([x, y, w, h], r) => this.createRegion(x, y, w, h, r));
     this.nextRegionId = this.regions.length;
@@ -109,6 +114,8 @@ export class Simulation {
     g.patRuleU = hash(P.seed, r, 0x72756C65) / 4294967296;
     g.patRule = 0;
     g.startU = hash(P.seed, r, 0x73746172) / 4294967296;
+    g.bigU = hash(P.seed, r, 0x62696775) / 4294967296; // 大きなマスにするか
+    g.bigV = hash(P.seed, r, 0x62696776) / 4294967296; // 〃 倍率
     g.started = false;
     g.patT = 0;
     g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
@@ -117,7 +124,15 @@ export class Simulation {
     g.trng = mulberry32(hash(P.seed, r, 0x74656D70));
     g.tempoPhase = Math.floor(g.trng() * 12);
     this.retime(g, false);
+    this.rescale(g);
     return g;
+  }
+
+  // 領域の倍率を決め直す。変わったら写真の流し込みは打ち切り、模様は種から置き直す（次の世代から反映）
+  rescale(g) {
+    const s = regionScale(this, g);
+    if (g.scale !== undefined && s !== g.scale) { g.inj = -1; g.patReset = true; }
+    g.scale = s;
   }
 
   // 次の世代から反映される
@@ -131,7 +146,7 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger', 'topology', 'topologyInterval', 'leakEnabled', 'leak'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger', 'topology', 'topologyInterval', 'leakEnabled', 'leak', 'bigFrac'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'topologyInterval') {
@@ -150,6 +165,7 @@ export class Simulation {
         if (r !== g.patRule) { g.patRule = r; g.patReset = true; }
       }
     }
+    if (key === 'bigFrac') for (const g of this.regions) this.rescale(g);
     if (key === 'direction') this.fixedDir = DIRECTIONS[value]; // 'all' なら undefined
     if (key === 'tempoFast' || key === 'tempoSlow') {
       // 範囲の外にいる領域は、すぐ範囲内に寄せる
@@ -167,6 +183,26 @@ export class Simulation {
     if (turn && g.dir !== undefined && u < P.dirChangeProb && d !== g.dir) { g.dir = d; g.inj = -1; }
     g.tempoLeft = P.tempoHoldMin + Math.floor(r() * (P.tempoHoldMax - P.tempoHoldMin));
   }
+
+  // 大きなマスの領域（倍率 s）は s 世代に1回進む（画面上の流れる速さを他の領域とそろえる）。
+  // テンポ（E）とは掛け合わせる：1世代あたり a/b 回進む。進む回数は (gen + tempoPhase) で決め、乱数は使わない
+  stepBig(g, m) {
+    let a = 1, b = g.scale;
+    if (this.P.tempo) {
+      if (--g.tempoLeft <= 0) this.retime(g);
+      const r = TEMPOS[g.level];
+      if (r >= 1) a = r; else b *= Math.round(1 / r);
+    }
+    const t = this.gen + g.tempoPhase, n = Math.floor(((t + 1) * a) / b) - Math.floor((t * a) / b);
+    if (!n) { MOTIONS.still.step(g, this, this.cur, this.nxt); return; } // この世代は進まない
+    for (let k = 0; k < n; k++) {
+      if (k > 0) MOTIONS.still.step(g, this, this.nxt, this.cur);
+      m.step(g, this, this.cur, this.nxt);
+    }
+  }
+
+  // 倍率 s の解析（{ cls, reps }）
+  scaleData(s) { return this.scales[s] ??= analyzeScale(this, s); }
 
   tempoRange() {
     const n = TEMPOS.length - 1, a = Math.round(this.P.tempoFast), b = Math.round(this.P.tempoSlow);
@@ -188,6 +224,7 @@ export class Simulation {
         if (this.gen < Math.floor(g.startU * this.P.stagger)) { MOTIONS.still.step(g, this, this.cur, this.nxt); continue; }
         g.started = true;
       }
+      if (g.scale > 1) { this.stepBig(g, m); continue; }
       if (!this.P.tempo || g.motion === 'still') { m.step(g, this, this.cur, this.nxt); continue; }
       if (--g.tempoLeft <= 0) this.retime(g);
       const rate = TEMPOS[g.level];

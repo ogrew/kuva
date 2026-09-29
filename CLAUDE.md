@@ -35,6 +35,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `src/engine/motions.js` | 領域の動き方 `MOTIONS`（`flow` / `ca` / `still`）。行の束としての1世代、ルールの切替・変形（A）、写真の流し込み（C） |
 | `src/engine/rules.js` | ルール表。性格 `GENRES`（B）、chaos の即時反映 |
 | `src/engine/analyze.js` / `regions.js` | 解析（平均色・k-means・分類・代表タイル）と領域分割。kivi からほぼそのまま。分割は kivi と同じく実際の長さ（px）で最小領域と向きを決める（マスの高さ比に対応） |
+| `src/engine/scale.js` | 大きなマス（Big cells）。倍率ごとの分類・代表タイル（`analyzeScale`）、領域の倍率（`regionScale`）、中のマスへの書き写し（`fillBlocks`） |
 | `src/engine/topology.js` | 領域の分裂・合体（F）。1組の領域だけを組み替える（`evolveRegions`） |
 | `src/engine/flat.js` | 塗りつぶすタイルの選び方（描画だけに効く）。結果はタイルごとの RGBA（1色＋2色塗りの半分ずつの6色で7層）と、描く位置ごとの割り方で、描画に渡す |
 | `src/image.js` | グリッド配置、パディング、縮小。kivi の sketch.js から |
@@ -88,7 +89,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 - 短いラベルで伝わりにくいものは `binding.element.title` にマウスを乗せたときの説明を書く
 - 選択肢が排他的なものはプルダウン
 - GUI のラベル・ツールチップ・状態パネルのメッセージは英語（短い名詞だけにして、単位や範囲はツールチップに書く）。コードのコメントは日本語
-- フォルダは Grid（Seed・Cell size・Aspect・Colors）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
+- フォルダは Grid（Seed・Cell size・Aspect・Colors・Big cells）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
 - パネルの先頭はタイトルバーを大きくしたヘッダー（`kuva` と `PHOTO × 1D CELLULAR AUTOMATA`、`.head`）。押すと畳めるのはそのまま。写真名・grid・seed は Status パネルにあるので、ヘッダーには出さない
 - 見た目は同じ作者の p5-hiragana-mosaic に合わせている（パネルまわりだけ）。白の半透明のパネル（`.panel` の中に Tweakpane。`--tp-*` の色は hiragana と同じ）、Space Grotesk ＋ M PLUS 1p（Google Fonts。オフラインでは別のフォントになってよい）、左下に Follow／GitHub のリンク（H で一緒に隠れる）
 - 背景は入力写真のぼかし（`#bg`）。写真を読み込んだときに1回だけ、縮小してぼかした画像を作る（`updateBackdrop`。毎フレームは描かない。`backdrop-filter` は下の映像が毎フレーム変わるので使わない）。描画は元写真の外側を透明にしているので、Fit = contain の余白にだけ見える
@@ -130,6 +131,14 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
 - Stagger との併用：候補は崩れ始めた領域だけ。新しい領域も始まったものとして引き継ぎ、待っている領域の元写真は崩さない
 - 2色塗りとの併用：`sim.regions` の配列が入れ替わったら、描画側（`showSim`）で塗り分けを作り直す
 - 漏れは「流れる」のときだけ（GUI も flow のときだけ表示）。先頭の行の入口を、4マスの帯ごと・24世代ごとにハッシュで開き、開いたところは上流側の隣の領域のタイルと状態をそのまま取り込む。写真の流し込み中は写真を優先し、画面の外とはつながない
+
+## 大きなマス（Big cells）
+
+- 領域ごとに、s×s マス（s = 2・3）を1マスとして CA を計算する（`g.scale`）。`hash(seed, 領域)` < `bigFrac` の領域だけで、2 と 3 は半々（`bigU`・`bigV`）。大きなマスが短い辺に `bigMinBlocks`（4）個並ばない領域は小さい倍率に落とす。元写真のままの領域（`still`）は 1。即時反映で、割合を上げても大きなマスの領域が増えるだけ。エンジンの既定値は 0（ゴールデンは変わらない）、GUI の初期値は 0.3。単位は領域（領域をまたいで別の区画に倍率を割り当てると、1つの領域に違う倍率が混ざり、1次元CAの行が成り立たない）
+- 状態・タイルは基本のマス目の配列のまま持つ。大きなマスの値は左上のマスに置き、中の各マスに同じ状態と「左上のタイル＋中の位置」を書き写す（`fillBlocks`）。どのマスも「ここに描く基本のタイル」を持つので、漏れ・合体・描画はどの倍率でも基本のマスとして扱える。`stepLines` は行内・行間の差を s 倍にして大きなマスの左上だけを読み書きする（s = 1 なら従来と同じ計算）
+- 分類：そのマスを左上とする s×s の平均色を全体のパレットで分類する（すべてのマスについて作るので、領域の位置が s の倍数でなくてよい）。代表タイルは s の倍数の位置の大きなマスから、状態ごとにハッシュの小さい順。乱数は使わず、最初に使うときに作る（`scaleData`）。領域の端で割り切れない大きなマスは欠けたまま描く
+- 速さ：倍率 s の領域は s 世代に1回進む（画面上の流れる速さをそろえるため。ユーザーの選択）。テンポ（E）とは掛け合わせて、1世代あたり a/b 回を `(gen + tempoPhase)` から決める（`stepBig`）
+- 模様は大きなマスの領域には重ねない（三角形が育つ幅にならないため。ユーザーの選択）。倍率が変わったら、流し込みは打ち切り、模様は種から置き直す
 
 ## マスの数字（Digits）
 
@@ -191,6 +200,7 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
 
 - **`npm test`**（Node 22+、依存なし。CI でも PR と main への push ごとに実行）
   - `test/sim.test.js`：決定性（動き方 × 味付け × 途中の chaos 変更）、C の流し込みで写真が元の位置に並ぶこと、E の ×2 が ×1 の2世代と同じこと、など
+  - `test/scale.test.js`：大きなマス。中の各マスがそろうこと、s 世代に1回だけ変わること、途中の変更を含む決定性
   - `test/topology.test.js`：分裂・合体と漏れ。領域がすき間・重なりなく画面を覆うこと、タイルが保たれること、途中の変更を含む決定性、4方向の漏れ、×2 でも領域の処理順で結果が変わらないこと
   - `test/golden.test.js`：ゴールデン
 - **ゴールデン**（`test/golden.json`）：固定の合成画像・固定パラメータ（再生中の操作を含む）で、500世代後の状態と `src` のハッシュ。生成結果が変わるとテストが落ちる

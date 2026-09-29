@@ -6,6 +6,7 @@
 // → 他の領域の有無や、動き方の中身に関係なく、領域ごとの乱数列がずれない。
 import { hash } from './rng.js';
 import { makeRule, GENRES } from './rules.js';
+import { fillBlocks } from './scale.js';
 
 // 元写真のまま（CA 処理しない領域）
 const still = {
@@ -71,22 +72,28 @@ function rulesChanged(g) {
  *               → 模様が1世代に1マスずつ流れていき、流れながらルールで形が変わる。
  *                 領域全体は kivi の時空図が流れ続けているのと同じになる。
  *               先頭の行を自分自身から決めると、数百世代で先頭が落ち着き、領域全体が止まってしまう
+ * 大きなマスの領域（g.scale = s > 1）は、s×s マスを1マスとして同じ計算をする。値は大きなマスの左上に書き、
+ * 最後に中の各マスへ書き写す（fillBlocks）。分類・代表タイルは倍率ごとのもの。模様は重ねない
  */
 function stepLines(g, sim, prev, next, flow) {
-  const { cols, K, cls, reps } = sim;
+  const { cols, K } = sim;
+  const sc = g.scale ?? 1;
+  const { cls, reps } = sim.scaleData(sc);
+  const bSrc = sc === 1 ? g.bSrc : reps[g.bVal][0];
   const rule = g.table;
   const { x, y, w, h } = g;
+  const bw = Math.ceil(w / sc), bh = Math.ceil(h / sc); // 大きなマスの数（端は欠けたまま）
   // 実際に流れる向き：進行方向が固定されていればそれ、ALL なら領域の向き
   const dir = sim.fixedDir ?? g.dir;
   // 向きが変わったら流し込みは打ち切り、模様は種から置き直す
   let turned = false;
   if (dir !== g.lastDir) { turned = g.lastDir !== undefined; g.lastDir = dir; g.inj = -1; }
   const vertical = dir < 2; // 下・上へ流れる = 1行が横に並ぶ
-  const lineLen = vertical ? w : h, lineCount = vertical ? h : w;
-  // start：先頭の行の0番目のセル、di：行内で隣へ進む差、dt：下流の行へ進む差
-  const start = dir === 0 ? y * cols + x : dir === 1 ? (y + h - 1) * cols + x : dir === 2 ? y * cols + x : y * cols + (x + w - 1);
-  const di = vertical ? 1 : cols;
-  const dt = dir === 0 ? cols : dir === 1 ? -cols : dir === 2 ? 1 : -1;
+  const lineLen = vertical ? bw : bh, lineCount = vertical ? bh : bw;
+  // start：先頭の行の0番目のセル、di：行内で隣へ進む差、dt：下流の行へ進む差、dt1：dt の向きに1マス
+  const start = dir === 0 ? y * cols + x : dir === 1 ? (y + (bh - 1) * sc) * cols + x : dir === 2 ? y * cols + x : y * cols + (x + (bw - 1) * sc);
+  const di = vertical ? sc : sc * cols;
+  const dt1 = dir === 0 ? cols : dir === 1 ? -cols : dir === 2 ? 1 : -1, dt = dt1 * sc;
   const ps = prev.state, pr = prev.src, ns = next.state, nr = next.src;
   const hist = g.hist;
   hist.fill(0);
@@ -109,7 +116,7 @@ function stepLines(g, sim, prev, next, flow) {
         const outside = dir === 0 ? y > 0 : dir === 1 ? y + h < sim.rows : dir === 2 ? x > 0 : x + w < cols;
         const open = hash(sim.P.seed, g.index, Math.floor(i / 4), Math.floor(sim.gen / 24)) / 4294967296 < sim.P.leak;
         if (outside && open) {
-          const n = c - dt;
+          const n = c - dt1;
           ns[c] = sim.boundary.state[n]; nr[c] = sim.boundary.src[n];
           hist[ns[c]]++;
           continue;
@@ -125,12 +132,12 @@ function stepLines(g, sim, prev, next, flow) {
       if (photo) {
         // 元写真（状態 = cls、タイル = 自分自身）
         C = cls[u]; sC = u;
-        if (i > 0) { L = cls[u - di]; sL = u - di; } else { L = g.bVal; sL = g.bSrc; }
-        if (i < lineLen - 1) { R = cls[u + di]; sR = u + di; } else { R = g.bVal; sR = g.bSrc; }
+        if (i > 0) { L = cls[u - di]; sL = u - di; } else { L = g.bVal; sL = bSrc; }
+        if (i < lineLen - 1) { R = cls[u + di]; sR = u + di; } else { R = g.bVal; sR = bSrc; }
       } else {
         C = ps[u]; sC = pr[u];
-        if (i > 0) { L = ps[u - di]; sL = pr[u - di]; } else { L = g.bVal; sL = g.bSrc; }
-        if (i < lineLen - 1) { R = ps[u + di]; sR = pr[u + di]; } else { R = g.bVal; sR = g.bSrc; }
+        if (i > 0) { L = ps[u - di]; sL = pr[u - di]; } else { L = g.bVal; sL = bSrc; }
+        if (i < lineLen - 1) { R = ps[u + di]; sR = pr[u + di]; } else { R = g.bVal; sR = bSrc; }
       }
       const I = cls[c];
       const o = rule[((L * K + C) * K + R) * K + I];
@@ -145,7 +152,8 @@ function stepLines(g, sim, prev, next, flow) {
       hist[o]++;
     }
   }
-  if (flow) stepPattern(g, sim, prev.mask, next.mask, start, di, dt, lineLen, lineCount, turned);
+  if (sc > 1) { fillBlocks(g, sim, next, sc); g.patT = 0; }
+  else if (flow) stepPattern(g, sim, prev.mask, next.mask, start, di, dt, lineLen, lineCount, turned);
   if (g.morph) morphRule(g, sim, lineLen * lineCount);
   else switchRule(g, sim, lineLen * lineCount);
 }
