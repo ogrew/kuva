@@ -121,7 +121,7 @@ Pattern フォルダ（模様）：模様のレイヤー（`patFrac`、`patRules
 - 模様が 1 のマスは、描画に渡すタイル番号を置き換えるだけ（`displaySrc`）。CA の状態とゴールデンには影響しない
 - 三角形が見えるのは、行の長さが24マス以上ある領域だけ（`patMinWidth`）。cellSize が大きいと該当する領域が少ない
 
-Evolve フォルダ（Rule mode＝A・B、Reinject＝C、Region tempo＝E）は、繰り返し感の対策として試して採用したもの。Stagger（`stagger`）は、0世代目から全領域が一斉に崩れ始めるのを避けるためのもの。領域ごとに `hash(seed, 領域)` で決めた世代（`startU × stagger`）までは `still` と同じく元写真のまま待ち、待つ間は `g.rng`・`g.trng` を消費しない。一度始まった領域（`g.started`）は止まらない。エンジンの既定値は 0（ゴールデンは変わらない）、GUI の初期値は 200。記号の A〜F はコードとこのメモの中だけで使い、GUI には出さない。D（写真へ戻る強さを揺らす）は issue（`ogrew/kuva#1`）。
+Evolve フォルダ（Rule mode＝A・B、Reinject＝C、Region tempo＝E）は、繰り返し感の対策として試して採用したもの。Stagger（`stagger`）は、0世代目から全領域が一斉に崩れ始めるのを避けるためのもの。領域ごとに `hash(seed, 領域)` で決めた世代（`startU × stagger`）までは `still` と同じく元写真のまま待ち、待つ間は `g.rng`・`g.trng` を消費しない。一度始まった領域（`g.started`）は止まらない。エンジンの既定値は 0（ゴールデンは変わらない）、GUI の初期値は 150。記号の A〜F はコードとこのメモの中だけで使い、GUI には出さない。D（写真へ戻る強さを揺らす）は issue（`ogrew/kuva#1`）。
 
 Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も Evolve にある。どちらも初期値は OFF で、OFF なら従来と同じ映像（ゴールデンは変わらない）。サブ項目（Interval、Amount）は OFF のときは隠し、値は保持する。
 - 分裂・合体は、`topologyInterval` の 0.5〜1.5倍の世代ごと（既定 48 なら 24〜72世代）に1組だけ組み替える。全体の作り直しではない。合体は、辺全体を共有して長方形になる2領域だけ。最小寸法は分割と同じく実際の長さで決め、領域数の上限は初期の2倍（最低16）。間隔を変えたら、残りの待ち時間を新旧の比で伸縮する
