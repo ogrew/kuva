@@ -2,7 +2,8 @@
 import { Pane } from 'tweakpane';
 import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
 import { PAT_RULES } from './engine/motions.js';
-import { flatColors, tileHalves, splitKinds } from './engine/flat.js';
+import { flatColors, tileHalves, blockHalves, splitKinds } from './engine/flat.js';
+import { SCALE_LIST, blockCodes } from './engine/scale.js';
 import { tileDigits } from './engine/digits.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
 import { Renderer } from './render/renderer.js';
@@ -14,6 +15,7 @@ const CONFIG = {
   cellSize: 24,   // 1マスの幅（元写真の px）
   cellAspect: 4,  // 1マスの高さの比率（ASPECTS の番号）。高さ = 幅 × 比率。4 = 1:1
   K: 7,           // 状態数 = パレット色数
+  bigFrac: 0.3,   // 大きなマス（2×2・4×4 マスを1マスとして計算する）にする領域の割合（即時反映）
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 15,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
@@ -119,7 +121,7 @@ function rebuild() {
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
   const photo = k < 1 ? scaledCanvas(padded, Math.round(g.GW * k), Math.round(g.GH * k)) : padded;
   renderer.setPhoto(g, photo);
-  renderer.setDigits(tileDigits(sim, CONFIG.digitBy));
+  layers = { sim, flat: [], digits: [], halves: [halves] };
   updateDigits();
   showSim();
   acc = 0;
@@ -127,20 +129,57 @@ function rebuild() {
 }
 
 // 今の世代を描画に渡す（模様のレイヤーを重ねたタイル番号）
-let flatRegions = null;
+let layoutRegions = null, layoutScale = -1;
 const showSim = () => {
   renderer.setSrc(sim.displaySrc());
-  // 分裂・合体で領域が変わったときだけ、2色塗りの領域マップを更新する。
-  if (flatRegions !== sim.regions) updateFlat();
+  // 分裂・合体で領域が変わったとき・領域の倍率が変わったときだけ、領域ごとの描画の情報を作り直す
+  if (layoutRegions !== sim.regions || layoutScale !== sim.scaleVersion) updateLayout();
 };
+
+// 領域ごとの描画の情報：大きなマスの倍率と中の位置、塗りつぶし・数字の、使っている倍率の層
+function updateLayout() {
+  layoutRegions = sim.regions; layoutScale = sim.scaleVersion;
+  renderer.setBlocks(blockCodes(sim));
+  updateFlat();
+  updateDigitLayers();
+}
+
+// 倍率ごとの解析（塗りつぶし・数字に使う）。使っている倍率の分だけ、必要になったときに作って残す
+// layers.flat[li]・layers.digits[li] = 描画に渡した層のパラメータ（同じなら作り直さない）
+let layers = null;
+const scalesInUse = () => new Set([0, ...sim.regions.map((g) => SCALE_LIST.indexOf(g.scale))]);
+function scaleSim(li) {
+  if (li === 0) return sim;
+  const { cls, mean } = sim.scaleData(SCALE_LIST[li]);
+  return { cls, mean, palette: sim.palette, K: sim.K, P: sim.P };
+}
+const scaleHalves = (li) => (layers.halves[li] ??= blockHalves(sim, halves, SCALE_LIST[li]));
 
 // 塗りつぶしの色を作り直して描画に渡す（描画だけに効くので、作り直しは不要）
 let halves = null; // タイルごとの半分ずつの平均色（2色塗り用。写真・グリッドが変わったときに作り直す）
 function updateFlat() {
   if (!sim) return;
-  flatRegions = sim.regions;
-  if (!(CONFIG.flatRatio > 0)) { renderer.setFlat(null); return; }
-  renderer.setFlat(flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, halves), splitKinds(sim, halves, CONFIG.flatSplit));
+  if (!(CONFIG.flatRatio > 0)) { renderer.setFlat(false); return; }
+  // 大きなマスの2色塗りの色は、2色塗りを使うときだけ作る（倍率 1 は写真を読み込んだときに作ってある）
+  const split = CONFIG.flatSplit > 0;
+  const key = [CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, split].join();
+  for (const li of scalesInUse()) {
+    if (layers.flat[li] === key) continue;
+    layers.flat[li] = key;
+    const h = li === 0 ? halves : split ? scaleHalves(li) : null;
+    renderer.setFlatColors(li, flatColors(scaleSim(li), CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, h, SCALE_LIST[li] - 1));
+  }
+  renderer.setFlat(true, splitKinds(sim, halves, CONFIG.flatSplit));
+}
+
+// 数字の層（倍率ごとのタイルの数字）。決め方を変えたら作り直す
+function updateDigitLayers() {
+  if (!sim) return;
+  for (const li of scalesInUse()) {
+    if (layers.digits[li] === CONFIG.digitBy) continue;
+    layers.digits[li] = CONFIG.digitBy;
+    renderer.setDigits(li, tileDigits(scaleSim(li), CONFIG.digitBy));
+  }
 }
 
 // 数字：正方形のマス（Aspect = 1）のときだけ描く。文字の形はフォントを変えたときだけ作り直す
@@ -315,6 +354,8 @@ onRebuild(cAspect, () => { aspectName(); refreshDigits(); });
 tip(cAspect, 'Cell height = width × 1/5 … 5');
 aspectName();
 tip(onRebuild(num(f1, 'K', 'Colors', 2, 12, 1)), 'Number of states (K). Cells are clustered into K colors by k-means');
+tip(onLive(num(f1, 'bigFrac', 'Big cells', 0, 1, 0.1), 'bigFrac', () => sim && showSim()), // 一時停止中も描画の情報を更新する
+  'Share of regions computed with 2×2 or 4×4 cells as one cell (half each). They step every 2 or 4 generations, so everything flows at the same speed on screen. 0 = off');
 
 // Motion（動き方と速さ）
 const f2 = pane.addFolder({ title: 'Motion' });
@@ -372,7 +413,7 @@ const refreshDigits = () => {
   cDigitShow.hidden = !isSquare() || !CONFIG.digits;
 };
 [cDigits, ...cDigitSub].forEach((c) => c.on('change', () => { refreshDigits(); updateDigits(); }));
-cDigitSub[0].on('change', () => { if (sim) renderer.setDigits(tileDigits(sim, CONFIG.digitBy)); });
+cDigitSub[0].on('change', updateDigitLayers);
 refreshDigits();
 const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRatio > 0); });
 [cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));

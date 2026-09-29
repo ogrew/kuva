@@ -1,14 +1,18 @@
 // renderer.js — WebGL2 描画
-// テクスチャは6枚：
+// テクスチャは7枚：
 //   写真：パディング済みグリッド全体の画像
 //   src ：cols×rows の R32I。セルごとに「描く写真タイルの番号」（毎世代更新）
-//   flat：cols×rows×9層の RGBA8 配列。タイルごとの塗りつぶしの色（0層目の A = 255 なら塗る）。1〜8層目は2色塗りの半分ずつの色
+//   flat：cols×rows×(9層 × 倍率3つ) の RGBA8 配列。タイルごとの塗りつぶしの色（0層目の A = 255 なら塗る）。1〜8層目は2色塗りの半分ずつの色
 //   kind：cols×rows の R8UI。描く位置ごとの2色塗りの割り方（0 = 1色、1 = 横、2 = 縦、3 = ＼、4 = ／）
-//   digit：cols×rows の R8UI。タイルごとの数字 0〜9（マスに重ねる数字）
+//   digit：cols×rows×倍率3つ の R8UI 配列。タイルごとの数字 0〜9（マスに重ねる数字）
+//   blk ：cols×rows の R8UI。描く位置ごとの倍率の番号と大きなマスの中の位置（blockCodes）
 //   glyph：0〜9 の文字の形（R8 の10層、ミップマップ付き）。1層がマス1つぶん
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
+// 大きなマス（倍率 s）では、塗りつぶし・2色塗り・数字を大きなマス1つ（左上 = 描くタイル − 中の位置）として引く。
+// 写真はマスごとに引く（中の各マスには「左上のタイル＋中の位置」が入っているので、つながった1枚になる）
 
 import { FLAT_LAYERS } from '../engine/flat.js';
+import { SCALE_LIST } from '../engine/scale.js';
 
 const VS = `#version 300 es
 void main() {
@@ -34,27 +38,31 @@ uniform vec2 uOff;      // キャンバス座標(px) → グリッド座標(セ�
 uniform vec2 uScale;
 uniform vec2 uImgMin;   // 元写真の範囲（グリッド座標）。外側は余白
 uniform vec2 uImgMax;
-uniform highp usampler2D uDigit;
+uniform highp usampler2D uBlk;
+uniform highp usampler2DArray uDigit;
 uniform highp sampler2DArray uGlyph;
 uniform bool uDigitsOn;
 uniform int uDigitMask;  // 描く数字（ビット d が 1 なら数字 d を描く）
 uniform vec3 uDigitColor;
 out vec4 outColor;
+const int FLAT_LAYERS = ${FLAT_LAYERS};
+const float SCALES[${SCALE_LIST.length}] = float[](${SCALE_LIST.map((s) => s.toFixed(1)).join(', ')});
 
 // 描く位置 c にタイル si を描いたときの色（塗りつぶし、または写真）
-vec3 tileColor(vec2 g, ivec2 c, ivec2 si, vec2 gx, vec2 gy) {
+// q = 大きなマスの中の位置（0〜1）、bo = 大きなタイルの左上、li = 倍率の番号（倍率 1 なら q = fract(g)、bo = si、li = 0）
+vec3 tileColor(vec2 g, ivec2 c, ivec2 si, vec2 gx, vec2 gy, vec2 q, ivec2 bo, int li) {
   vec2 sc = vec2(si);
   // 塗りつぶし：元の位置にないタイル（CA で運ばれてきたもの）だけを塗る
   if (uFlatOn && si != c) {
-    vec4 f = texelFetch(uFlat, ivec3(si, 0), 0);
+    int L = li * FLAT_LAYERS;
+    vec4 f = texelFetch(uFlat, ivec3(bo, L), 0);
     if (f.a > 0.5) {
-      // 2色塗り：描く位置の領域の割り方で、マスの中のどちらの半分かを決める
+      // 2色塗り：描く位置の領域の割り方で、大きなマスの中のどちらの半分かを決める
       uint k = texelFetch(uKind, c, 0).r;
       if (k != 0u) {
-        vec2 q = fract(g);
         int layer = k == 1u ? (q.y < 0.5 ? 1 : 2) : k == 2u ? (q.x < 0.5 ? 3 : 4)
                   : k == 3u ? (q.x < q.y ? 5 : 6) : (q.x + q.y < 1.0 ? 7 : 8);
-        f = texelFetch(uFlat, ivec3(si, layer), 0);
+        f = texelFetch(uFlat, ivec3(bo, L + layer), 0);
       }
       return f.rgb;
     }
@@ -78,13 +86,21 @@ void main() {
   ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
   int s = texelFetch(uSrc, c, 0).r;
   ivec2 si = ivec2(s % uCols, s / uCols);
-  vec3 col = tileColor(g, c, si, gx, gy);
-  // 数字：描くタイルの数字を、マスいっぱいの大きさで重ねる（文字の形の1層 = マス1つぶん）。
-  // ミップマップの段は、マス内の位置の微分（= uScale）から決める
+  // 大きなマス：倍率の番号と中の位置 → 大きなマスの中の位置 q と、大きなタイルの左上 bo
+  uint b = texelFetch(uBlk, c, 0).r;
+  int li = int(b & 3u);
+  float bs = SCALES[li];
+  ivec2 off = ivec2(int((b >> 2) & 7u), int((b >> 5) & 7u));
+  vec2 q = (vec2(off) + fract(g)) / bs;
+  // 倍率が変わった直後（まだ進んでいない領域）は中がそろっていないので、グリッドの内側に収める
+  ivec2 bo = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
+  vec3 col = tileColor(g, c, si, gx, gy, q, bo, li);
+  // 数字：描くタイルの数字を、大きなマスいっぱいの大きさで重ねる（文字の形の1層 = マス1つぶん）。
+  // ミップマップの段は、マス内の位置の微分（= uScale / 倍率）から決める
   if (uDigitsOn) {
-    int d = int(texelFetch(uDigit, si, 0).r);
+    int d = int(texelFetch(uDigit, ivec3(bo, li), 0).r);
     if (((uDigitMask >> d) & 1) != 0) {
-      float a = textureGrad(uGlyph, vec3(fract(g), float(d)), vec2(uScale.x, 0.0), vec2(0.0, uScale.y)).r;
+      float a = textureGrad(uGlyph, vec3(q, float(d)), vec2(uScale.x / bs, 0.0), vec2(0.0, uScale.y / bs)).r;
       col = mix(col, uDigitColor, a);
     }
   }
@@ -110,9 +126,9 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog;
     this.u = {};
-    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
     this.vao = gl.createVertexArray();
-    this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.flatOn = false; this.grid = null;
+    this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.blkTex = null; this.flatOn = false; this.grid = null;
     this.digitTex = null; this.glyphTex = null; this.digitsOn = false; this.digitColor = [1, 1, 1]; this.digitMask = 0;
   }
 
@@ -127,6 +143,7 @@ export class Renderer {
     if (this.flatTex) gl.deleteTexture(this.flatTex);
     if (this.kindTex) gl.deleteTexture(this.kindTex);
     if (this.digitTex) gl.deleteTexture(this.digitTex);
+    if (this.blkTex) gl.deleteTexture(this.blkTex);
     this.grid = layout;
     this.texSize = [photo.width, photo.height];
 
@@ -148,7 +165,7 @@ export class Renderer {
 
     this.flatTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.flatTex);
-    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, layout.cols, layout.rows, FLAT_LAYERS);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, layout.cols, layout.rows, FLAT_LAYERS * SCALE_LIST.length);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     this.flatOn = false;
@@ -160,18 +177,34 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
     this.digitTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.digitTex);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.digitTex);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.R8UI, layout.cols, layout.rows, SCALE_LIST.length);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    // 倍率の番号と中の位置。最初はすべて倍率 1（0）
+    this.blkTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.blkTex);
     gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8UI, layout.cols, layout.rows);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this.setBlocks(new Uint8Array(layout.cols * layout.rows));
   }
 
-  /** digits = tileDigits の結果（タイルごとの数字 0〜9） */
-  setDigits(digits) {
+  /** codes = blockCodes の結果（描く位置ごとの倍率の番号と中の位置） */
+  setBlocks(codes) {
     const gl = this.gl, { cols, rows } = this.grid;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.bindTexture(gl.TEXTURE_2D, this.digitTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.UNSIGNED_BYTE, digits);
+    gl.bindTexture(gl.TEXTURE_2D, this.blkTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.UNSIGNED_BYTE, codes);
+  }
+
+  /** li = 倍率の番号（SCALE_LIST）、digits = その倍率の tileDigits の結果（タイルごとの数字 0〜9） */
+  setDigits(li, digits) {
+    const gl = this.gl, { cols, rows } = this.grid;
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.digitTex);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, li, cols, rows, 1, gl.RED_INTEGER, gl.UNSIGNED_BYTE, digits);
   }
 
   /** 0〜9 の文字の形。data = size×size×10 の濃さ（0〜255、size は2の累乗）。写真とは関係ないので、写真を入れ替えても残す */
@@ -197,16 +230,22 @@ export class Renderer {
     this.digitMask = mask;
   }
 
-  /** colors = flatColors の結果（層ごとのタイルの RGBA）、kinds = splitKinds の結果。colors が null なら塗らない */
-  setFlat(colors, kinds) {
-    this.flatOn = !!colors;
-    if (!colors) return;
+  /** on = 塗るか、kinds = splitKinds の結果（on のときだけ） */
+  setFlat(on, kinds) {
+    this.flatOn = on;
+    if (!on) return;
+    const gl = this.gl, { cols, rows } = this.grid;
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D, this.kindTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.UNSIGNED_BYTE, kinds);
+  }
+
+  /** li = 倍率の番号（SCALE_LIST）、colors = その倍率の flatColors の結果（層ごとのタイルの RGBA） */
+  setFlatColors(li, colors) {
     const gl = this.gl, { cols, rows } = this.grid;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.flatTex);
-    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, cols, rows, FLAT_LAYERS, gl.RGBA, gl.UNSIGNED_BYTE, colors);
-    gl.bindTexture(gl.TEXTURE_2D, this.kindTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.UNSIGNED_BYTE, kinds);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, li * FLAT_LAYERS, cols, rows, FLAT_LAYERS, gl.RGBA, gl.UNSIGNED_BYTE, colors);
   }
 
   setSrc(src) {
@@ -256,8 +295,9 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.flatTex);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.kindTex);
-    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.digitTex);
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.digitTex);
     gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.glyphTex);
+    gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.blkTex);
     const u = this.u;
     gl.uniform1i(u.uPhoto, 0);
     gl.uniform1i(u.uSrc, 1);
@@ -266,6 +306,7 @@ export class Renderer {
     gl.uniform1i(u.uFlatOn, this.flatOn ? 1 : 0);
     gl.uniform1i(u.uDigit, 4);
     gl.uniform1i(u.uGlyph, 5);
+    gl.uniform1i(u.uBlk, 6);
     gl.uniform1i(u.uDigitsOn, this.digitsOn && this.glyphTex ? 1 : 0);
     gl.uniform3fv(u.uDigitColor, this.digitColor);
     gl.uniform1i(u.uDigitMask, this.digitMask);

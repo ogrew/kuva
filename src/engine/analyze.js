@@ -5,7 +5,7 @@
  * P = { K, kmeansSamples, kmeansIter, repsPerClass }
  * io = { cols, rows, Ax, Ay, analysis: {data, stride} }（解析用画像：1セル = Ax×Ay px）
  * rng：呼び出し側の乱数（消費順は常に同じ）
- * 戻り値 { palette, cls, reps, mean }
+ * 戻り値 { palette, cls, reps, mean, centers }（centers = パレットの丸める前の色。大きなマスの分類に使う）
  */
 export function analyze(P, io, rng) {
   const { cols, rows, Ax, Ay, analysis } = io;
@@ -105,5 +105,5 @@ export function analyze(P, io, rng) {
     }
   }
 
-  return { palette, cls, reps: reps.map((r) => Int32Array.from(r)), mean };
+  return { palette, cls, reps: reps.map((r) => Int32Array.from(r)), mean, centers: cen };
 }
