@@ -28,7 +28,7 @@ const CONFIG = {
   morphMin: 150,          // A：変形にかける世代数の最短（即時反映）
   morphMax: 500,          // A：〃 最長（即時反映）
   inject: true,           // C：写真を流し込む（即時反映。流れるのときだけ効く）
-  injectPeriod: 200,      // C：流し込みの周期（世代）（即時反映）
+  injectPeriod: 120,      // C：流し込みの周期（世代）（即時反映）
   topology: false,        // 領域の分裂・合体
   topologyInterval: 48,   // 変化の間隔の中心値（世代）
   leakEnabled: false,     // 隣からの漏れ
@@ -395,7 +395,7 @@ tip(cMorph[1], 'Shortest morph (generations)');
 tip(cMorph[2], 'Longest morph (generations)');
 const cInject = fx.addBinding(CONFIG, 'inject', { label: 'Reinject' });
 tip(cInject, 'Flow only. Periodically feeds the photo in from upstream, staggered per region');
-const cPeriod = num(fx, 'injectPeriod', '　└ Period', 20, 600, 10);
+const cPeriod = num(fx, 'injectPeriod', '　└ Period', 20, 360, 10);
 tip(cPeriod, 'Reinject period (generations)');
 onLive(cPeriod, 'injectPeriod');
 const cTempo = fx.addBinding(CONFIG, 'tempo', { label: 'Region tempo' });
