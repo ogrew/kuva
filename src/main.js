@@ -3,9 +3,11 @@ import { Pane } from 'tweakpane';
 import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
 import { PAT_RULES } from './engine/motions.js';
 import { flatColors, tileHalves, splitKinds } from './engine/flat.js';
+import { tileDigits } from './engine/digits.js';
 import { loadBitmap, gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from './image.js';
 import { Renderer } from './render/renderer.js';
 import { RegionBorders } from './render/region-borders.js';
+import { DIGIT_FONTS, GLYPH_SIZE, makeGlyphs } from './render/glyphs.js';
 
 const CONFIG = {
   seed: 12345,
@@ -38,6 +40,11 @@ const CONFIG = {
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
+  digits: false,  // マスに数字を重ねる（正方形のマスのときだけ。描画だけに効く）
+  digitBy: 'lum', // 数字の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
+  digitFont: 'silkscreen', // 数字のフォント（DIGIT_FONTS）
+  digitColor: '#ffffff', // 数字の色（全マス共通）
+  digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
   regionBorders: false, // デバッグ：白い領域境界（表示だけ、PNGには含めない）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
 };
@@ -113,6 +120,8 @@ function rebuild() {
   const k = Math.min(1, renderer.maxPhotoSize / Math.max(g.GW, g.GH));
   const photo = k < 1 ? scaledCanvas(padded, Math.round(g.GW * k), Math.round(g.GH * k)) : padded;
   renderer.setPhoto(g, photo);
+  renderer.setDigits(tileDigits(sim, CONFIG.digitBy));
+  updateDigits();
   showSim();
   acc = 0;
   status = `Built in ${Math.round(performance.now() - t0)} ms`;
@@ -133,6 +142,21 @@ function updateFlat() {
   flatRegions = sim.regions;
   if (!(CONFIG.flatRatio > 0)) { renderer.setFlat(null); return; }
   renderer.setFlat(flatColors(sim, CONFIG.flatRatio, CONFIG.flatUnit, CONFIG.flatColor, halves), splitKinds(sim, halves, CONFIG.flatSplit));
+}
+
+// 数字：正方形のマス（Aspect = 1）のときだけ描く。文字の形はフォントを変えたときだけ作り直す
+const isSquare = () => ASPECTS[Math.round(CONFIG.cellAspect)]?.p === 1;
+let glyphFont = '', glyphSeq = 0;
+function updateDigits() {
+  const g = renderer.grid;
+  const mask = CONFIG.digitShow.reduce((m, d) => m | (1 << d), 0);
+  const on = CONFIG.digits && !!g && g.cw === g.ch && mask !== 0;
+  const hex = parseInt(CONFIG.digitColor.slice(1, 7), 16);
+  renderer.setDigitStyle(on, [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255], mask);
+  if (on && glyphFont !== CONFIG.digitFont) {
+    const font = glyphFont = CONFIG.digitFont, seq = ++glyphSeq;
+    makeGlyphs(font).then((data) => { if (seq === glyphSeq) renderer.setGlyphs(data, GLYPH_SIZE); });
+  }
 }
 
 // 背景：写真のぼかし。写真を読み込んだときに1回だけ、小さく縮めてぼかした画像を作る（毎フレームは描かない）
@@ -288,7 +312,7 @@ updateCellRange();
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
 const cAspect = num(f1, 'cellAspect', '', 0, ASPECTS.length - 1, 1);
 const aspectName = () => { const d = cellDims(); cAspect.label = `Aspect ×${d.label} (${d.cw}×${d.ch})`; };
-onRebuild(cAspect, aspectName);
+onRebuild(cAspect, () => { aspectName(); refreshDigits(); });
 tip(cAspect, 'Cell height = width × 1/5 … 5');
 aspectName();
 tip(onRebuild(num(f1, 'K', 'Colors', 2, 12, 1)), 'Number of states (K). Cells are clustered into K colors by k-means');
@@ -318,6 +342,39 @@ tip(cFlat, 'Share of carried cells (photo tiles away from their original place) 
 tip(cFlatSub[0], 'Per tile: decide for each photo tile\nPer color: paint all tiles of the same K color together');
 tip(cFlatSub[1], 'Palette: the K color the tile belongs to\nMean: the tile\'s own average color');
 tip(cFlatSub[2], 'Share of regions painted in two colors: each tile is halved and each half gets its own color. The cut (horizontal, vertical or either diagonal) is picked per region to fit the photo. 0 = off');
+const cDigits = f3.addBinding(CONFIG, 'digits', { label: 'Digits' });
+const cDigitSub = [
+  list(f3, 'digitBy', '　└ By', { 'Brightness': 'lum', 'State': 'state' }),
+  list(f3, 'digitFont', '　└ Font', Object.fromEntries(Object.entries(DIGIT_FONTS).map(([k, f]) => [f.label, k]))),
+  f3.addBinding(CONFIG, 'digitColor', { label: '　└ Color' }),
+];
+// 表示する数字：0〜9 の切り替えを横に並べた1行（Tweakpane にない部品なので、同じ見た目の行を作って Color の下に入れる）
+const cDigitShow = document.createElement('div');
+cDigitShow.className = 'tp-lblv digit-show';
+cDigitShow.title = 'Digits to draw. Cells whose digit is off show the photo only';
+cDigitShow.innerHTML = '<div class="tp-lblv_l">　└ Show</div><div class="tp-lblv_v"></div>';
+for (let d = 0; d < 10; d++) {
+  const el = document.createElement('label');
+  el.innerHTML = `<input type="checkbox"${CONFIG.digitShow.includes(d) ? ' checked' : ''}><span>${d}</span>`;
+  el.querySelector('input').addEventListener('change', () => {
+    CONFIG.digitShow = [...cDigitShow.querySelectorAll('input')].flatMap((e, i) => (e.checked ? [i] : []));
+    updateDigits();
+  });
+  cDigitShow.lastChild.appendChild(el);
+}
+cDigitSub[2].element.after(cDigitShow);
+tip(cDigits, 'Square cells (Aspect ×1) only. Draws a digit 0–9 in each cell. Tiles of the same average color get the same digit, and it moves with the tile');
+tip(cDigitSub[0], 'Brightness: 10 steps by brightness, each digit about equally common (dark = 0)\nState: the K color the CA sees (ones digit when K > 10)');
+tip(cDigitSub[1], 'Font of the digits');
+tip(cDigitSub[2], 'Color of the digits (same for every cell)');
+const refreshDigits = () => {
+  cDigits.hidden = !isSquare();
+  cDigitSub.forEach((c) => { c.hidden = !isSquare() || !CONFIG.digits; });
+  cDigitShow.hidden = !isSquare() || !CONFIG.digits;
+};
+[cDigits, ...cDigitSub].forEach((c) => c.on('change', () => { refreshDigits(); updateDigits(); }));
+cDigitSub[0].on('change', () => { if (sim) renderer.setDigits(tileDigits(sim, CONFIG.digitBy)); });
+refreshDigits();
 const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRatio > 0); });
 [cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));
 refreshFlat();
