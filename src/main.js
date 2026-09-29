@@ -197,7 +197,7 @@ function updateFlat() {
   renderer.setFlat(true, splitKinds(sim, halves, CONFIG.flatSplit));
 }
 
-// 数字の層（倍率ごとのタイルの数字）。決め方を変えたら作り直す
+// 数字の層（倍率ごとのタイルの数字）。決め方を変えたら作り直す。カメラ入力中は新しいフレームごとに作り直す
 function updateDigitLayers() {
   if (!sim) return;
   for (const li of scalesInUse()) {
@@ -216,6 +216,7 @@ function updateDigits() {
   const on = CONFIG.digits && !!g && g.cw === g.ch && mask !== 0;
   const hex = parseInt(CONFIG.digitColor.slice(1, 7), 16);
   renderer.setDigitStyle(on, [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255], mask);
+  if (on) updateDigitLayers();
   if (on && glyphFont !== CONFIG.digitFont) {
     const font = glyphFont = CONFIG.digitFont, seq = ++glyphSeq;
     makeGlyphs(font).then((data) => { if (seq === glyphSeq) renderer.setGlyphs(data, GLYPH_SIZE); });
@@ -320,6 +321,9 @@ function feedCamera() {
   ctx.drawImage(out, 0, 0, an.width, an.height);
   cellMeans({ ...io, analysis: { data: ctx.getImageData(0, 0, an.width, an.height).data, stride: an.width } }, mean);
   sim.setColors(mean);
+  // 数字もタイルの今の平均色から決め直す（描いていないときは印だけ消して、描き始めたときに作る）
+  layers.digits = [];
+  if (renderer.digitsOn) updateDigitLayers();
   liveMs = liveMs * 0.9 + (performance.now() - t0) * 0.1;
 }
 function frame(t) {
