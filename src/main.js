@@ -331,7 +331,7 @@ const f3 = pane.addFolder({ title: 'Render' });
 tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
 tip(f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' }),
   'Show region boundaries as thin white lines. Display only: not included in saved PNGs');
-const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.01);
+const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.1);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
   list(f3, 'flatColor', '　└ Color', { 'Palette': 'palette', 'Mean': 'mean' }),
@@ -437,7 +437,7 @@ tip(cStagger, 'Each region stays as the photo until a generation between 0 and t
 
 // Pattern（基本セルオートマトンの模様を重ねる）
 const fe = pane.addFolder({ title: 'Pattern' });
-const cPat = num(fe, 'patFrac', 'Amount', 0, 1, 0.01);
+const cPat = num(fe, 'patFrac', 'Amount', 0, 1, 0.1);
 onLive(cPat, 'patFrac');
 tip(cPat, 'Share of regions (rows of 24+ cells) overlaid with an elementary CA pattern, drawn with one photo tile per region. Pick the rules below');
 // 模様に使うルール：ルールごとのチェックボックス。各領域は ON のルールの中から1つ選ぶ
