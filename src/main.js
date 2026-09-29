@@ -416,7 +416,7 @@ const cLeakEnabled = fx.addBinding(CONFIG, 'leakEnabled', { label: 'Region leak'
 const cLeak = num(fx, 'leak', '　└ Amount', 0, 1, 0.05);
 onLive(cLeak, 'leak');
 tip(cLeakEnabled, 'Flow only. Takes in tiles from neighboring regions. Off retains the amount; tiles already carried in remain');
-tip(cLeak, 'Share of the upstream edge open to neighbors. 0 = closed, 1 = fully open. Reinject takes priority; screen edges stay closed');
+tip(cLeak, 'Share of the upstream edge open to neighbors. The edge is split into 4 bands, each opened or closed for 24 generations. 0 = closed, 1 = fully open. Reinject takes priority; screen edges stay closed');
 const refreshFx = () => {
   cMorph.forEach((c) => { c.hidden = !FLAVORS[CONFIG.flavor].ruleMorph; });
   cPeriod.hidden = !CONFIG.inject;

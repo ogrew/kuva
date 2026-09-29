@@ -84,6 +84,28 @@ test('漏れ：4方向とも隣のタイルが入口に入り、画面端は循�
   }
 });
 
+test('漏れ：入口を行の幅の4等分で開閉し、帯の中はそろう', () => {
+  const s = new Simulation({ ...base, topology: false, leak: 0.5, direction: 'down', ruleMorph: false, regionRules: false, pull: 0, chaos: 0, switchProb: 0 }, fakeIO(64, 48));
+  const prev = s.src.slice();
+  s.step();
+  let open = 0, closed = 0;
+  for (const g of s.regions) {
+    if (g.y === 0) continue;
+    const bands = [[], [], [], []];
+    for (let i = 0; i < g.w; i++) {
+      const c = g.y * s.cols + g.x + i;
+      const leaked = s.src[c] === prev[c - s.cols];
+      if (!leaked) assert.equal(s.src[c], prev[c + (g.h - 1) * s.cols]);
+      bands[Math.floor(i * 4 / g.w)].push(leaked);
+    }
+    for (const b of bands) if (b.length) {
+      assert.ok(b.every(v => v === b[0]), '帯の中は全部開くか全部閉じる');
+      b[0] ? open++ : closed++;
+    }
+  }
+  assert.ok(open > 0 && closed > 0);
+});
+
 test('漏れ：×2テンポでも領域の走査順で結果が変わらない', () => {
   const P = { ...base, topology: false, tempo: true, tempoFast: 0, tempoSlow: 0, inject: true, patFrac: 1, patMinWidth: 4 };
   const a = new Simulation(P, fakeIO(60, 40)), b = new Simulation(P, fakeIO(60, 40));
