@@ -1,6 +1,7 @@
 // main.js — 画像の読み込み、GUI、キー操作、再生ループ
 import { Pane } from 'tweakpane';
 import { Simulation, TEMPOS, TEMPO_LABELS } from './engine/sim.js';
+import { cellMeans } from './engine/analyze.js';
 import { PAT_RULES } from './engine/motions.js';
 import { flatColors, tileHalves, blockHalves, splitKinds } from './engine/flat.js';
 import { SCALE_LIST, blockCodes } from './engine/scale.js';
@@ -50,7 +51,7 @@ const CONFIG = {
   digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
-  // ---- 入力（カメラ。段階1：写真テクスチャだけを毎フレーム差し替える）----
+  // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
   camera: false,    // カメラを入力にする
   camMirror: true,  // 左右反転（自撮り向け。変えると作り直し）
   camDevice: '',    // 使うカメラ（'' = 既定）
@@ -102,7 +103,7 @@ const borders = new RegionBorders(document.getElementById('region-borders'));
 let bitmap = null, imgName = '';
 const camera = new Camera();
 let still = null;     // カメラを ON にする前の写真 { bitmap, name }（OFF にしたら戻す）
-let camFrame = null;  // カメラのフレームを毎回描くキャンバス { g, pad, out }（out = 写真テクスチャと同じ寸法）
+let camFrame = null;  // カメラのフレームを毎回描くキャンバス { g, pad, out, … }（out = 写真テクスチャと同じ寸法）
 let sim = null;
 let playing = true;
 let acc = 0;          // 次の世代までの端数（世代単位）
@@ -140,7 +141,10 @@ function rebuild() {
     const pad = k < 1 ? document.createElement('canvas') : null, out = document.createElement('canvas');
     if (pad) { pad.width = g.GW; pad.height = g.GH; }
     out.width = photo.width; out.height = photo.height;
-    camFrame = { g, pad, out };
+    // 分類の作り直し用：1マス = 最大 2×2 px に縮めて平均色を取る（作り直しの 4×4 より粗いが、読み戻しが 1/4 になる）
+    const an = document.createElement('canvas'), lx = Math.min(2, Ax), ly = Math.min(2, Ay);
+    an.width = g.cols * lx; an.height = g.rows * ly;
+    camFrame = { g, pad, out, an, io: { cols: g.cols, rows: g.rows, Ax: lx, Ay: ly }, mean: new Float32Array(g.cols * g.rows * 3), dirty: false };
   }
   layers = { sim, flat: [], digits: [], halves: [halves] };
   updateDigits();
@@ -298,14 +302,34 @@ function updateCameraFrame() {
     ctx.drawImage(pad, 0, 0, out.width, out.height);
   } else drawPadded(out.getContext('2d'), camera.video, g, CONFIG.camMirror);
   renderer.updatePhoto(out);
+  camFrame.dirty = true;
+}
+
+// 今のフレームのマスごとの平均色をエンジンに渡す（パレットは固定のまま分類だけ作り直す。I がカメラに追従する）。
+// 世代を進める直前に、新しいフレームがあるときだけ（1世代に最大1回）
+let liveMs = 0; // かかった時間（Status に出す）
+function feedCamera() {
+  if (!camFrame?.dirty) return;
+  camFrame.dirty = false;
+  const t0 = performance.now();
+  const { out, an, io, mean } = camFrame;
+  // 縮小は GPU のキャンバスで行い、小さくなった画像だけを読み戻す（CPU のキャンバスに描くと、1080p の全体が読み戻される）
+  const ctx = an.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(out, 0, 0, an.width, an.height);
+  cellMeans({ ...io, analysis: { data: ctx.getImageData(0, 0, an.width, an.height).data, stride: an.width } }, mean);
+  sim.setColors(mean);
+  liveMs = liveMs * 0.9 + (performance.now() - t0) * 0.1;
 }
 function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000);
   lastT = t;
+  updateCameraFrame();
   if (sim && playing) {
     acc += dt * CONFIG.gps;
     let n = 0;
-    while (acc >= 1 && n < MAX_STEPS_PER_FRAME) { sim.step(); acc -= 1; n++; }
+    while (acc >= 1 && n < MAX_STEPS_PER_FRAME) { if (!n) feedCamera(); sim.step(); acc -= 1; n++; }
     if (acc >= 1) acc = 0;
     if (n) showSim();
     rate.n += n;
@@ -315,7 +339,6 @@ function frame(t) {
     camFps = ((camera.frames - rate.frames) * 1000) / (t - rate.t);
     rate.t = t; rate.n = 0; rate.frames = camera.frames;
   }
-  updateCameraFrame();
 
   renderer.draw(CONFIG.fit);
   borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit);
@@ -333,7 +356,7 @@ function updateInfo() {
     stats.grid = `${sim.cols}×${sim.rows} (cell ${cw}×${ch}px)`;
     stats.regions = sim.regions.length;
     stats.seed = sim.P.seed;
-    stats.image = `${imgName} ${bitmap.width}×${bitmap.height}` + (camera.on ? ` ${Math.round(camFps)}fps` : '');
+    stats.image = `${imgName} ${bitmap.width}×${bitmap.height}` + (camera.on ? ` ${Math.round(camFps)}fps live ${liveMs.toFixed(1)}ms` : '');
   }
 }
 
@@ -374,10 +397,10 @@ mon('regions', 'Regions', { format: (v) => String(Math.round(v)) });
 mon('seed', 'Seed', { format: (v) => String(Math.round(v)) });
 mon('image', 'Image');
 
-// Input（カメラ入力。試作：段階1）
+// Input（カメラ入力）
 const fi = pane.addFolder({ title: 'Input' });
 const cCamera = fi.addBinding(CONFIG, 'camera', { label: 'Camera' });
-tip(cCamera, 'Use the camera as the image (C). The frame at the moment of building sets up the CA; after that only the picture inside the cells follows the camera. Rebuilding (R, seed, cell size…) takes the current frame. Off returns to the previous image');
+tip(cCamera, 'Use the camera as the image (C). The frame at the moment of building sets the palette and regions; after that the picture inside the cells and the pull back toward the image follow the camera. Rebuilding (R, seed, cell size…) takes the current frame. Off returns to the previous image');
 const cMirror = fi.addBinding(CONFIG, 'camMirror', { label: '　└ Mirror' });
 tip(cMirror, 'Flip horizontally (for a front camera)');
 let cDevice = null;

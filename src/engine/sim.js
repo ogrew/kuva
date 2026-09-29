@@ -1,12 +1,12 @@
 // sim.js — シミュレーション本体。映像の中身は「seed・パラメータ・世代番号」だけで決まる。
 // 壁時計には依存しない（いつ step() を呼ぶかは呼び出し側が決める）。
 import { mulberry32, hash } from './rng.js';
-import { analyze } from './analyze.js';
+import { analyze, nearest } from './analyze.js';
 import { makeRulePool, applyChaos } from './rules.js';
 import { evolveRegions, initTopology } from './topology.js';
 import { subdivide } from './regions.js';
 import { MOTIONS, PAT_RULES } from './motions.js';
-import { analyzeScale, regionScale } from './scale.js';
+import { analyzeScale, classifyScale, regionScale } from './scale.js';
 
 // 生成ロジックを変えたら上げる
 export const ENGINE_VERSION = 3;
@@ -87,7 +87,7 @@ export class Simulation {
     this.scaleVersion = 0; // 領域の倍率が変わるたびに増える（描画側が作り直しに使う）
     this.regions = subdivide(P, cols, rows, rng, this.cw, this.ch)
       .map(([x, y, w, h], r) => this.createRegion(x, y, w, h, r));
-    this.nextRegionId = this.regions.length;
+    this.nextRegionId = this.initialRegions = this.regions.length;
     this.maxRegions = Math.max(16, this.regions.length * 2);
     this.topologyEvents = { split: 0, merge: 0 };
 
@@ -200,6 +200,29 @@ export class Simulation {
     for (let k = 0; k < n; k++) {
       if (k > 0) MOTIONS.still.step(g, this, this.nxt, this.cur);
       m.step(g, this, this.cur, this.nxt);
+    }
+  }
+
+  /**
+   * カメラ入力（段階2）：マスごとの平均色を差し替え、パレットは固定のまま分類（cls。I が指す写真の状態）を作り直す。
+   * 大きなマスの分類も作り直す。代表タイルは変えない。乱数は使わない（何世代目に何を渡したかが同じなら同じ映像）。
+   * 一度も CA にかかっていない領域（崩れ始める前・最初から元写真のまま）は、状態も新しい分類にそろえる（写真がそのまま映っているため）。
+   * 分裂・合体でできた元写真のままの領域は、運ばれたタイルと状態を持っているので触らない。
+   * mean = cols×rows×3 の平均色。次の世代から反映される
+   */
+  setColors(mean) {
+    const { K, centers: cen } = this, N = this.cols * this.rows;
+    this.mean.set(mean);
+    for (let i = 0; i < N; i++) this.cls[i] = nearest(this.mean, i, cen, K);
+    for (const s of Object.keys(this.scales)) {
+      if (+s === 1) continue;
+      const d = this.scales[s];
+      classifyScale(this, +s, d.cls, d.mean);
+    }
+    const { state: st, src } = this.cur, cols = this.cols;
+    for (const g of this.regions) {
+      if (g.started && !(g.motion === 'still' && g.index < this.initialRegions)) continue;
+      for (let y = g.y; y < g.y + g.h; y++) for (let i = y * cols + g.x, e = i + g.w; i < e; i++) if (src[i] === i) st[i] = this.cls[i];
     }
   }
 
