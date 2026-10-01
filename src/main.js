@@ -21,7 +21,8 @@ const CONFIG = {
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 15,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
-  direction: 'all', // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'（即時反映）
+  direction: 'all', // 進行方向 'all'（領域ごと） | 上下左右 | 斜め 'down-right' など（DIRECTIONS。即時反映）
+  diagFrac: 0.2,    // All のとき、斜めに流れる領域の割合（即時反映）
   flatRatio: 0,   // 塗りつぶし：元の位置にないタイルのうち、一色で塗る割合（0 = 塗らない。即時反映）
   flatUnit: 'tile', // 塗り方 'tile'（マスごと） | 'state'（似た色ごと）
   flatColor: 'palette', // 塗りの色 'palette'（代表色） | 'mean'（平均色）
@@ -44,6 +45,7 @@ const CONFIG = {
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
+  patSkew: true,          // 斜めに流れる領域で、模様も一緒に斜めに流す（試作。即時反映）
   digits: false,  // マスに文字を重ねる（GUI では Glyphs。正方形のマスのときだけ。描画だけに効く）
   digitBy: 'lum', // 番号 0〜9 の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
   glyphSet: 'digits', // 番号に割り当てる文字（GLYPH_SETS）：'digits'（0〜9） | 'kana'（kanaText）
@@ -530,11 +532,19 @@ tip(onLive(num(f1, 'bigFrac', 'Big cells', 0, 1, 0.1), 'bigFrac', () => sim && s
 
 // Motion（動き方と速さ）
 const f2 = pane.addFolder({ title: 'Motion' });
-tip(onRebuild(list(f2, 'motion', 'Motion', { 'Flow': 'flow', 'In place': 'ca' }), () => refreshFx()),
+tip(onRebuild(list(f2, 'motion', 'Motion', { 'Flow': 'flow', 'In place': 'ca' }), () => { refreshFx(); refreshDir(); }),
   'Flow: the space-time diagram flows through each region\nIn place: each row changes in place as a 1D CA (for comparison)');
-const cDir = list(f2, 'direction', 'Direction', { 'All': 'all', 'Down': 'down', 'Up': 'up', 'Right': 'right', 'Left': 'left' });
-onLive(cDir, 'direction');
-tip(cDir, 'All: each region flows its own way (changes now and then with Region tempo)\nOthers: every region flows that way');
+const cDir = list(f2, 'direction', 'Direction', {
+  'All': 'all', 'Down': 'down', 'Up': 'up', 'Right': 'right', 'Left': 'left',
+  'Down-right': 'down-right', 'Down-left': 'down-left', 'Up-right': 'up-right', 'Up-left': 'up-left',
+});
+tip(cDir, 'All: each region flows its own way, some of them diagonally (changes now and then with Region tempo)\nOthers: every region flows that way. Diagonal flow wraps around the sides of each region');
+const cDiag = num(f2, 'diagFrac', '　└ Diagonal', 0, 1, 0.1);
+onLive(cDiag, 'diagFrac');
+tip(cDiag, 'Share of regions that flow diagonally when Direction is All. 0 = straight only');
+const refreshDir = () => { cDiag.hidden = CONFIG.direction !== 'all' || CONFIG.motion !== 'flow'; };
+onLive(cDir, 'direction', refreshDir);
+refreshDir();
 tip(onLive(num(f2, 'chaos', 'Chaos', 0, 1, 0.01), 'chaos'), 'Share of fully random entries mixed into the rule tables');
 tip(num(f2, 'gps', 'Speed', 0.5, 48, 0.5), 'Generations per second'); // 再生ループが毎フレーム読む
 
@@ -680,6 +690,9 @@ for (const r of Object.keys(PAT_RULES)) {
     if (sim) sim.set('patRules', CONFIG.patRules);
   });
 }
+// 試作：斜めに流れる領域で、模様（三角形）も一緒に斜めに流すか
+tip(onLive(fe.addBinding(CONFIG, 'patSkew', { label: 'Skew' }), 'patSkew'),
+  'In diagonally flowing regions, the pattern flows diagonally too (the triangles lean). Off: the pattern flows straight');
 
 // キー操作の一覧（パネルの一番下。ボタンは置かず、操作はキーだけ）
 pane.addBlade({ view: 'separator' });

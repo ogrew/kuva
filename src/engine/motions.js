@@ -66,9 +66,22 @@ function rulesChanged(g) {
 }
 
 /**
+ * 流れる向き [dir, sh]。dir：0=下へ 1=上へ 2=右へ 3=左へ。sh：横へのずれ（-1・0・1。行の中の向きで、縦に流れるなら右、横に流れるなら下が +）。
+ * sh ≠ 0 なら斜めに流れる。進行方向を固定していればその向き（行の向きは領域の向きのまま）、
+ * All なら領域の向きで、diagFrac の割合の領域が斜めになる。ずれの左右は向きごとにハッシュで決める（乱数は使わない）
+ */
+function heading(g, sim) {
+  const f = sim.fixedDir;
+  if (f) return g.dir < 2 ? [f.v, f.sv] : [f.h, f.sh];
+  if (!(g.diagU < sim.P.diagFrac)) return [g.dir, 0];
+  return [g.dir, hash(sim.P.seed, g.index, g.dir, 0x64696167) & 1 ? 1 : -1];
+}
+
+/**
  * 領域を「行」の束として1世代進める。
  * flow = false：各行は自分自身の前の世代から次を決める（案C：その場で変化）
- * flow = true ：各行は1つ上流の行の前の世代から次を決める。先頭の行の上流は末尾の行（ぐるっと循環）
+ * flow = true ：各行は1つ上流の行の前の世代から次を決める。先頭の行の上流は末尾の行（ぐるっと循環）。
+ *               斜めのときは上流の行の1マス横を読む（行の中も循環。領域はねじれたトーラスになる）
  *               → 模様が1世代に1マスずつ流れていき、流れながらルールで形が変わる。
  *                 領域全体は kivi の時空図が流れ続けているのと同じになる。
  *               先頭の行を自分自身から決めると、数百世代で先頭が落ち着き、領域全体が止まってしまう
@@ -84,10 +97,11 @@ function stepLines(g, sim, prev, next, flow) {
   const { x, y, w, h } = g;
   const bw = Math.ceil(w / sc), bh = Math.ceil(h / sc); // 大きなマスの数（端は欠けたまま）
   // 実際に流れる向き：進行方向が固定されていればそれ、ALL なら領域の向き
-  const dir = sim.fixedDir ?? g.dir;
+  // sh：斜めに流れるときの横へのずれ（行の中で ±1。flow のときだけ）
+  const [dir, sh0] = heading(g, sim), sh = flow ? sh0 : 0;
   // 向きが変わったら流し込みは打ち切り、模様は種から置き直す
   let turned = false;
-  if (dir !== g.lastDir) { turned = g.lastDir !== undefined; g.lastDir = dir; g.inj = -1; }
+  if (dir !== g.lastDir || sh !== g.lastSh) { turned = g.lastDir !== undefined; g.lastDir = dir; g.lastSh = sh; g.inj = -1; }
   const vertical = dir < 2; // 下・上へ流れる = 1行が横に並ぶ
   const lineLen = vertical ? bw : bh, lineCount = vertical ? bh : bw;
   // start：先頭の行の0番目のセル、di：行内で隣へ進む差、dt：下流の行へ進む差、dt1：dt の向きに1マス
@@ -106,10 +120,13 @@ function stepLines(g, sim, prev, next, flow) {
     // 前の世代のどの行を見るか（自分からの差）。flow の先頭の行は末尾の行（循環）、
     // 写真の流し込み中は元写真の行 inj を読む
     const photo = t === 0 && inj >= 0;
-    const up = !flow ? 0 : t > 0 ? dt : -(photo ? inj : lineCount - 1) * dt;
+    const tu = !flow ? t : t > 0 ? t - 1 : photo ? inj : lineCount - 1;
     const raw = t <= j;
     for (let i = 0, c = start + t * dt; i < lineLen; i++, c += di) {
-      const u = c - up;
+      // 斜めのときは、上流の行の1マス横を読む（行の端は反対側へ回り込む）。写真の流し込みでは、
+      // 元の位置に並ぶまでに流れてずれる分（inj マス）を先にずらして読む
+      const iu = !sh ? i : photo ? (((i + sh * inj) % lineLen) + lineLen) % lineLen : (i - sh + lineLen) % lineLen;
+      const u = start + tu * dt + iu * di;
       // 上流の境界を部分的に開く。行の幅を4等分した帯ごとに、24世代保って開閉を決める（点状のちらつきを避ける。大きなマスの領域は大きなマスの数で4等分）。
       // 写真を復元している最中は写真を優先する。画面外にはつながない。
       if (flow && t === 0 && !raw && sim.P.leakEnabled && sim.P.leak > 0) {
@@ -132,12 +149,12 @@ function stepLines(g, sim, prev, next, flow) {
       if (photo) {
         // 元写真（状態 = cls、タイル = 自分自身）
         C = cls[u]; sC = u;
-        if (i > 0) { L = cls[u - di]; sL = u - di; } else { L = g.bVal; sL = bSrc; }
-        if (i < lineLen - 1) { R = cls[u + di]; sR = u + di; } else { R = g.bVal; sR = bSrc; }
+        if (iu > 0) { L = cls[u - di]; sL = u - di; } else { L = g.bVal; sL = bSrc; }
+        if (iu < lineLen - 1) { R = cls[u + di]; sR = u + di; } else { R = g.bVal; sR = bSrc; }
       } else {
         C = ps[u]; sC = pr[u];
-        if (i > 0) { L = ps[u - di]; sL = pr[u - di]; } else { L = g.bVal; sL = bSrc; }
-        if (i < lineLen - 1) { R = ps[u + di]; sR = pr[u + di]; } else { R = g.bVal; sR = bSrc; }
+        if (iu > 0) { L = ps[u - di]; sL = pr[u - di]; } else { L = g.bVal; sL = bSrc; }
+        if (iu < lineLen - 1) { R = ps[u + di]; sR = pr[u + di]; } else { R = g.bVal; sR = bSrc; }
       }
       const I = cls[c];
       const o = rule[((L * K + C) * K + R) * K + I];
@@ -153,7 +170,7 @@ function stepLines(g, sim, prev, next, flow) {
     }
   }
   if (sc > 1) { fillBlocks(g, sim, next, sc); g.patT = 0; }
-  else if (flow) stepPattern(g, sim, prev.mask, next.mask, start, di, dt, lineLen, lineCount, turned);
+  else if (flow) stepPattern(g, sim, prev.mask, next.mask, start, di, dt, lineLen, lineCount, turned, sim.P.patSkew ? sh : 0);
   if (g.morph) morphRule(g, sim, lineLen * lineCount);
   else switchRule(g, sim, lineLen * lineCount);
 }
@@ -172,14 +189,14 @@ export const PAT_RULES = { 30: 'one', 90: 'one', 110: 'random', 150: 'one' };
  * 置き直す。端に届くと壁で跳ね返って模様が埋まり、市松模様のかたまりになってしまうため。
  * 模様が 1 のマスは、描画で領域ごとの1枚のタイルに置き換わる（CA の状態・タイルには影響しない）。乱数は使わずハッシュ
  */
-function stepPattern(g, sim, pm, nm, start, di, dt, lineLen, lineCount, turned) {
+function stepPattern(g, sim, pm, nm, start, di, dt, lineLen, lineCount, turned, sh) {
   const P = sim.P;
   const on = g.patU < P.patFrac && lineLen >= P.patMinWidth && g.patRule > 0;
   const zero = (t0) => { for (let t = t0; t < lineCount; t++) for (let i = 0; i < lineLen; i++) nm[start + t * dt + i * di] = 0; };
   if (!on) { zero(0); g.patT = 0; return; }
   const period = Math.max(12, Math.round(lineLen * (0.3 + 0.2 * g.patV)));
   if (turned || g.patReset) { zero(1); g.patT = 0; g.patReset = false; } // 向き・ルールが変わったら、古い模様は捨てる
-  else for (let t = lineCount - 1; t >= 1; t--) for (let i = 0; i < lineLen; i++) nm[start + t * dt + i * di] = pm[start + (t - 1) * dt + i * di];
+  else for (let t = lineCount - 1; t >= 1; t--) for (let i = 0; i < lineLen; i++) nm[start + t * dt + i * di] = pm[start + (t - 1) * dt + ((i - sh + lineLen) % lineLen) * di];
   const rule = g.patRule, mid = Math.floor(lineLen / 2), one = PAT_RULES[rule] === 'one';
   const reseed = one ? g.patT % period === 0 : g.patT === 0;
   for (let i = 0; i < lineLen; i++) {

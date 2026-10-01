@@ -17,7 +17,7 @@ test('進行方向：固定すると全領域がその向きに流れ、ALL に�
       if (i === 100) s.set('direction', 'down');
       if (i === 250) s.set('direction', 'all');
       s.step();
-      if (i === 200) for (const g of s.regions) if (g.motion !== 'still') assert.equal(g.lastDir, DIRECTIONS.down);
+      if (i === 200) for (const g of s.regions) if (g.motion !== 'still') assert.equal(g.lastDir, DIRECTIONS.down.v);
     }
     return { s, own };
   };
@@ -25,6 +25,58 @@ test('進行方向：固定すると全領域がその向きに流れ、ALL に�
   assert.deepEqual(a.s.src, b.s.src);
   // 固定中は E の向き変更が見た目に出ない（領域の向き g.dir は変わりうるが、流れる向きは固定）
   for (const g of a.s.regions) if (g.motion !== 'still') assert.equal(g.lastDir, g.dir);
+});
+
+test('斜め：写真の流し込みは横にずらして入れ、領域の長さぶん流すと元の位置に並ぶ', () => {
+  for (const direction of ['all', 'down-right', 'down-left', 'up-right', 'up-left']) {
+    const s = new Simulation({ seed: 3, K: 5, chaos: 0.5, skipProb: 0, inject: true, injectPeriod: 100000, diagFrac: 1, direction }, fakeIO(60, 40));
+    for (const g of s.regions) g.injPhase = 0;
+    const len = (g) => (g.lastDir < 2 ? g.h : g.w);
+    s.step();
+    // 1世代目：先頭の行には、元写真の末尾の行を (長さ-1) マス先にずらしたものが入る
+    for (const g of s.regions) {
+      assert.notEqual(g.lastSh, 0, `${direction}：領域 ${g.index} が斜め`);
+      if (g.lastDir !== 0) continue; // 下へ流れる領域だけ確かめる
+      for (let i = 0; i < g.w; i++) {
+        const want = (g.y + g.h - 1) * s.cols + g.x + ((((i + g.lastSh * (g.h - 1)) % g.w) + g.w) % g.w);
+        assert.equal(s.src[g.y * s.cols + g.x + i], want, `${direction}：領域 ${g.index}`);
+      }
+    }
+    const longest = Math.max(...s.regions.map(len));
+    let checked = s.regions.filter((g) => len(g) === 1).length;
+    for (let n = 2; n <= longest; n++) {
+      s.step();
+      for (const g of s.regions) {
+        if (len(g) !== n) continue;
+        checked++;
+        for (let yy = g.y; yy < g.y + g.h; yy++) for (let xx = g.x; xx < g.x + g.w; xx++) {
+          const c = yy * s.cols + xx;
+          assert.equal(s.src[c], c, `${direction}：領域 ${g.index}（向き ${g.lastDir}・ずれ ${g.lastSh}）`);
+        }
+      }
+    }
+    assert.equal(checked, s.regions.length, direction);
+  }
+});
+
+test('斜め：割合 0 なら従来と同じ。途中で割合・模様の傾きを変えても決定的', () => {
+  const base = { seed: 8, K: 6, chaos: 0.2, inject: true, injectPeriod: 70, tempo: true, patFrac: 1, patMinWidth: 8 };
+  assert.deepEqual(run({ ...base, diagFrac: 0 }, 200).src, run(base, 200).src);
+  const go = () => {
+    const s = new Simulation(base, fakeIO(80, 60));
+    for (let i = 0; i < 400; i++) {
+      if (i === 50) s.set('diagFrac', 0.5);
+      if (i === 150) s.set('patSkew', false);
+      if (i === 200) s.set('direction', 'up-left');
+      if (i === 300) s.set('direction', 'all');
+      s.step();
+    }
+    return s;
+  };
+  const a = go(), b = go();
+  assert.deepEqual(a.src, b.src);
+  assert.deepEqual(a.cur.mask, b.cur.mask);
+  assert.notDeepEqual(a.src, run(base, 400).src);
 });
 
 test('進行方向：初期値（ALL）なら固定しない', () => {
