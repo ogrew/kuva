@@ -15,8 +15,15 @@ export const ENGINE_VERSION = 3;
 export const TEMPOS = [2, 1, 1 / 2, 1 / 3, 1 / 4, 1 / 5];
 export const TEMPO_LABELS = ['×2', '×1', '×1/2', '×1/3', '×1/4', '×1/5'];
 
-// 進行方向 → 向きの番号（motions.js の g.dir と同じ：0=下へ 1=上へ 2=右へ 3=左へ）
-export const DIRECTIONS = { down: 0, up: 1, right: 2, left: 3 };
+// 進行方向 → 流れる向き（motions.js の g.dir と同じ：0=下へ 1=上へ 2=右へ 3=左へ）と横へのずれ（-1・0・1）。
+// v・sv は行が横に並ぶ領域（g.dir が上下）、h・sh は行が縦に並ぶ領域（g.dir が左右）に使う。
+// ずれの + は、縦に流れるなら右、横に流れるなら下。斜めでは、行の向き（横か縦か）は領域ごとの向きのまま残す
+const dirOf = (v, sv, h, sh) => ({ v, sv, h, sh });
+export const DIRECTIONS = {
+  down: dirOf(0, 0, 0, 0), up: dirOf(1, 0, 1, 0), right: dirOf(2, 0, 2, 0), left: dirOf(3, 0, 3, 0),
+  'down-right': dirOf(0, 1, 2, 1), 'down-left': dirOf(0, -1, 3, 1),
+  'up-right': dirOf(1, 1, 2, -1), 'up-left': dirOf(1, -1, 3, -1),
+};
 
 // GUI に出さない内部値
 export const ENGINE_DEFAULTS = {
@@ -48,7 +55,9 @@ export const ENGINE_DEFAULTS = {
   bigFrac: 0,          // 大きなマス（2×2・4×4 マスを1マスとして計算する）にする領域の割合（0 = なし）
   bigMinBlocks: 4,     // 大きなマスが短いほうの辺にこれだけ並ばない領域は、小さい倍率に落とす
   stagger: 0,          // 領域が崩れ始める世代のばらつき。領域ごとに 0〜stagger 世代目まで元写真のまま待つ（0 = 一斉に始まる）
-  direction: 'all',    // 進行方向 'all'（領域ごと） | 'down' | 'up' | 'right' | 'left'。固定中は E の向き変更も効かない
+  direction: 'all',    // 進行方向 'all'（領域ごと） | DIRECTIONS のキー（上下左右・斜め4方向）。固定中は E の向き変更も効かない
+  diagFrac: 0,         // All のとき、斜めに流れる領域の割合（0 = 上下左右だけ。GUI の初期値は main.js）
+  patSkew: true,       // 斜めに流れる領域で、模様も一緒に斜めに流す（試作。false なら模様はまっすぐ流れる）
   // 領域
   maxDepth: 7,
   minDepth: 2,
@@ -116,6 +125,7 @@ export class Simulation {
     g.startU = hash(P.seed, r, 0x73746172) / 4294967296;
     g.bigU = from ? from.bigU : hash(P.seed, r, 0x62696775) / 4294967296; // 大きなマスにするか
     g.bigV = from ? from.bigV : hash(P.seed, r, 0x62696776) / 4294967296; // 〃 倍率
+    g.diagU = hash(P.seed, r, 0x64696175) / 4294967296; // All のとき斜めに流れるか（diagFrac と比べる）
     g.started = false;
     g.patT = 0;
     g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
@@ -148,7 +158,7 @@ export class Simulation {
   }
 
   // 再生中に変えられるパラメータ（次の世代から反映）。グリッドやルールの作りに関わるものは作り直しが必要
-  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger', 'topology', 'topologyInterval', 'leakEnabled', 'leak', 'bigFrac'];
+  static LIVE = ['chaos', 'holdMax', 'morphMin', 'morphMax', 'inject', 'injectPeriod', 'tempo', 'tempoFast', 'tempoSlow', 'direction', 'patFrac', 'patRules', 'stagger', 'topology', 'topologyInterval', 'leakEnabled', 'leak', 'bigFrac', 'diagFrac', 'patSkew'];
   set(key, value) {
     if (!Simulation.LIVE.includes(key)) throw new Error(`${key} は再生中に変えられません`);
     if (key === 'topologyInterval') {
@@ -168,7 +178,11 @@ export class Simulation {
       }
     }
     if (key === 'bigFrac') for (const g of this.regions) this.rescale(g);
-    if (key === 'direction') this.fixedDir = DIRECTIONS[value]; // 'all' なら undefined
+    if (key === 'direction') {
+      if (value !== 'all' && !(value in DIRECTIONS)) throw new Error(`direction は 'all' か ${Object.keys(DIRECTIONS).join('・')} にしてください`);
+      this.fixedDir = DIRECTIONS[value]; // 'all' なら undefined
+    }
+    if (key === 'patSkew') for (const g of this.regions) g.patReset = true; // 古い模様は捨てて種から置き直す
     if (key === 'tempoFast' || key === 'tempoSlow') {
       // 範囲の外にいる領域は、すぐ範囲内に寄せる
       const [lo, hi] = this.tempoRange();
