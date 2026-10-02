@@ -19,10 +19,10 @@ const CONFIG = {
   K: 7,           // 状態数 = パレット色数
   bigFrac: 0.3,   // 大きなマス（2×2・4×4 マスを1マスとして計算する）にする領域の割合（即時反映）
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
-  gps: 15,        // 世代/秒（即時反映）
+  gps: 12,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
   direction: 'all', // 進行方向 'all'（領域ごと） | 上下左右 | 斜め 'down-right' など（DIRECTIONS。即時反映）
-  diagFrac: 0.2,    // All のとき、斜めに流れる領域の割合（即時反映）
+  diagFrac: 0.1,    // All のとき、斜めに流れる領域の割合（即時反映）
   flatRatio: 0,   // 塗りつぶし：元の位置にないタイルのうち、一色で塗る割合（0 = 塗らない。即時反映）
   flatUnit: 'tile', // 塗り方 'tile'（マスごと） | 'state'（似た色ごと）
   flatColor: 'palette', // 塗りの色 'palette'（代表色） | 'mean'（平均色）
@@ -34,14 +34,14 @@ const CONFIG = {
   morphMax: 500,          // A：〃 最長（即時反映）
   inject: true,           // C：写真を流し込む（即時反映。流れるのときだけ効く）
   injectPeriod: 120,      // C：流し込みの周期（世代）（即時反映）
-  topology: false,        // 領域の分裂・合体
+  topology: true,         // 領域の分裂・合体
   topologyInterval: 80,   // 領域ごとの変化の間隔の中心値（世代）
-  leakEnabled: false,     // 隣からの漏れ
+  leakEnabled: true,      // 隣からの漏れ
   leak: 0.6,              // 境界の開放率（OFFでも保持）
   tempo: false,           // E：領域ごとのテンポ（即時反映）
   tempoFast: 1,           // E：テンポの範囲 最速（TEMPOS の番号。即時反映）
   tempoSlow: 4,           // E：〃 最遅
-  stagger: 150,           // 領域が崩れ始める世代のばらつき（0〜300。0 = 一斉に始まる。即時反映）
+  stagger: 120,           // 領域が崩れ始める世代のばらつき（0〜300。0 = 一斉に始まる。即時反映）
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
@@ -53,7 +53,7 @@ const CONFIG = {
   kanaFont: 'dotgothic',   // ひらがなのフォント（KANA_FONTS）
   kanaText: formatGlyphText([...GLYPH_SETS.kana.chars]), // ひらがなのとき番号 0〜9 に割り当てる文字（区切り。空の枠の番号は描かない。漢字・カタカナも通す）
   digitColor: '#ffffff', // 数字の色（全マス共通）
-  digitShow: [0, 1], // 表示する数字（全部に出すとうるさいので、一部だけ。ひらがなのときは使わない）
+  digitShow: [0], // 表示する数字（全部に出すとうるさいので、一部だけ。ひらがなのときは使わない）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
   // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
