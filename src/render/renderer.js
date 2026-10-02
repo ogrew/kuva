@@ -1,7 +1,7 @@
 // renderer.js — WebGL2 描画
 // テクスチャは7枚：
 //   写真：パディング済みグリッド全体の画像
-//   src ：cols×rows の R32I。セルごとに「描く写真タイルの番号」（毎世代更新）
+//   src ：cols×rows の R32I。セルごとに「描く写真タイルの番号」（毎世代更新）。負の数 ~s はタイル s の色を反転して描く（模様の Invert）
 //   flat：cols×rows×(9層 × 倍率3つ) の RGBA8 配列。タイルごとの塗りつぶしの色（0層目の A = 255 なら塗る）。1〜8層目は2色塗りの半分ずつの色
 //   kind：cols×rows の R8UI。描く位置ごとの2色塗りの割り方（0 = 1色、1 = 横、2 = 縦、3 = ＼、4 = ／）
 //   digit：cols×rows×倍率3つ の R8UI 配列。タイルごとの数字 0〜9（マスに重ねる数字）
@@ -146,6 +146,9 @@ void main() {
   if (any(lessThan(g, uImgMin)) || any(greaterThanEqual(g, uImgMax))) { outColor = vec4(0.0); return; }
   ivec2 c = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGrid) - 1);
   int s = texelFetch(uSrc, c, 0).r;
+  // 負の数は、模様の Invert：そのマス（塗り・縮めた残り・文字も）の色を反転する
+  bool inv = s < 0;
+  if (inv) s = ~s;
   ivec2 si = ivec2(s % uCols, s / uCols);
   // 大きなマス：倍率の番号と中の位置 → 大きなマスの中の位置 q と、大きなタイルの左上 bo
   uint b = texelFetch(uBlk, c, 0).r;
@@ -161,6 +164,7 @@ void main() {
     vec2 q2 = (q - 0.5) / max(k, 1e-4) + 0.5;
     ivec2 bo0 = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
     vec3 mc = uShrinkFill.a > 0.5 ? uShrinkFill.rgb : texelFetch(uMean, ivec3(bo0, li), 0).rgb;
+    if (inv) mc = 1.0 - mc;
     if (k <= 0.0 || any(lessThan(q2, vec2(0.0))) || any(greaterThanEqual(q2, vec2(1.0)))) { outColor = vec4(mc, 1.0); return; }
     vec2 g2 = origin + q2 * bs;
     ivec2 c2 = clamp(ivec2(floor(g2)), ivec2(0), ivec2(uGrid) - 1);
@@ -170,6 +174,8 @@ void main() {
     if (c2 - off2 != c - off || int(b2 & 3u) != li) { outColor = vec4(mc, 1.0); return; }
     g = g2; c = c2; b = b2; off = off2; q = q2;
     s = texelFetch(uSrc, c, 0).r;
+    inv = s < 0;
+    if (inv) s = ~s;
     si = ivec2(s % uCols, s / uCols);
     gx /= k; gy /= k;
   }
@@ -185,6 +191,7 @@ void main() {
       col = mix(col, uDigitColor, a);
     }
   }
+  if (inv) col = 1.0 - col;
   outColor = vec4(col, 1.0);
 }`;
 

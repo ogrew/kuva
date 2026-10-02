@@ -57,7 +57,7 @@ export const ENGINE_DEFAULTS = {
   stagger: 0,          // 領域が崩れ始める世代のばらつき。領域ごとに 0〜stagger 世代目まで元写真のまま待つ（0 = 一斉に始まる）
   direction: 'all',    // 進行方向 'all'（領域ごと） | DIRECTIONS のキー（上下左右・斜め4方向）。固定中は E の向き変更も効かない
   diagFrac: 0,         // All のとき、斜めに流れる領域の割合（0 = 上下左右だけ。GUI の初期値は main.js）
-  patSkew: true,       // 斜めに流れる領域で、模様も一緒に斜めに流す（試作。false なら模様はまっすぐ流れる）
+  patSkew: true,       // 斜めに流れる領域で、模様も一緒に斜めに流す（false なら模様はまっすぐ流れる）
   // 領域
   maxDepth: 7,
   minDepth: 2,
@@ -300,10 +300,12 @@ export class Simulation {
     }
   }
 
-  // 描画に渡すタイル番号。模様が 1 のマスは inkTile、それ以外は src そのもの（返す配列は使い回す）
-  displaySrc() {
+  // 描画に渡すタイル番号（返す配列は使い回す）。模様が 1 のマスは、ink = 'tile' なら inkTile、
+  // 'invert' なら ~src（負の数。シェーダはそのマスの色を反転して描く）。それ以外は src そのもの
+  displaySrc(ink = 'tile') {
     const { src, mask } = this.cur, d = this.disp;
-    for (let i = 0; i < d.length; i++) d[i] = mask[i] ? this.inkTile[i] : src[i];
+    if (ink === 'invert') for (let i = 0; i < d.length; i++) d[i] = mask[i] ? ~src[i] : src[i];
+    else for (let i = 0; i < d.length; i++) d[i] = mask[i] ? this.inkTile[i] : src[i];
     return d;
   }
 }
