@@ -74,6 +74,8 @@ export function classifyScale(sim, s, cls, bmean, cand = null) {
 /**
  * 領域の倍率。hash(seed, 領域) < bigFrac の領域だけ 2 か 4（半々）。
  * 大きなマスが短いほうの辺に bigMinBlocks 個並ばないなら、小さい倍率に落とす。元写真のままの領域は 1
+ * 辺が倍率で割り切れない（大きなマスが領域の端で欠ける）ときも落とす。ただし画面の右端・下端に接する辺は欠けてよい。
+ * 領域の境目は4マスの倍数にそろえているので（regions.js の alignCut）、落ちるのはとても小さい領域どうしが合体したときくらい
  * bigFrac を上げると大きなマスの領域が増えるだけで、入れ替わらない
  */
 export function regionScale(sim, g) {
@@ -82,7 +84,8 @@ export function regionScale(sim, g) {
   // 落とす先も候補の中から（4 → 2 → 1）
   for (let k = Math.floor(g.bigV * BIG_SCALES.length); k >= 0; k--) {
     const s = BIG_SCALES[k];
-    if (Math.ceil(Math.min(g.w, g.h) / s) >= P.bigMinBlocks) return s;
+    const fits = (g.w % s === 0 || g.x + g.w === sim.cols) && (g.h % s === 0 || g.y + g.h === sim.rows);
+    if (fits && Math.ceil(Math.min(g.w, g.h) / s) >= P.bigMinBlocks) return s;
   }
   return 1;
 }
@@ -114,19 +117,16 @@ export function fillBlocks(g, sim, next, s) {
 
 /**
  * 描く位置ごとの倍率と、大きなマスの中の位置（描画だけに使う）。
- * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 4 | 欠けたマス << 6
+ * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 4
  * （中の位置は2ビットずつなので、倍率は 4 まで）
- * 欠けたマス = 領域の右端・下端で s マスに足りない大きなマス（文字はマスいっぱいに描くと途中で切れるので、1倍で描く）
  */
 export function blockCodes(sim) {
   const { cols } = sim, out = new Uint8Array(sim.cols * sim.rows);
   for (const g of sim.regions) {
     const s = g.scale, li = SCALE_LIST.indexOf(s);
     if (li <= 0) continue;
-    // 欠けた大きなマスが始まる位置（そこから先の列・行。割り切れれば領域の外）
-    const cutX = g.x + g.w - g.w % s, cutY = g.y + g.h - g.h % s;
     for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
-      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 4 | (x >= cutX || y >= cutY ? 1 : 0) << 6;
+      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 4;
     }
   }
   return out;
