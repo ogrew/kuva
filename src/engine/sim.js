@@ -300,10 +300,12 @@ export class Simulation {
     }
   }
 
-  // 描画に渡すタイル番号。模様が 1 のマスは inkTile、それ以外は src そのもの（返す配列は使い回す）
-  displaySrc() {
+  // 描画に渡すタイル番号（返す配列は使い回す）。模様が 1 のマスは、ink = 'tile' なら inkTile、
+  // 'invert' なら ~src（負の数。シェーダはそのマスの色を反転して描く）。それ以外は src そのもの
+  displaySrc(ink = 'tile') {
     const { src, mask } = this.cur, d = this.disp;
-    for (let i = 0; i < d.length; i++) d[i] = mask[i] ? this.inkTile[i] : src[i];
+    if (ink === 'invert') for (let i = 0; i < d.length; i++) d[i] = mask[i] ? ~src[i] : src[i];
+    else for (let i = 0; i < d.length; i++) d[i] = mask[i] ? this.inkTile[i] : src[i];
     return d;
   }
 }
