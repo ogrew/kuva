@@ -57,7 +57,7 @@ export const ENGINE_DEFAULTS = {
   stagger: 0,          // 領域が崩れ始める世代のばらつき。領域ごとに 0〜stagger 世代目まで元写真のまま待つ（0 = 一斉に始まる）
   direction: 'all',    // 進行方向 'all'（領域ごと） | DIRECTIONS のキー（上下左右・斜め4方向）。固定中は E の向き変更も効かない
   diagFrac: 0,         // All のとき、斜めに流れる領域の割合（0 = 上下左右だけ。GUI の初期値は main.js）
-  patSkew: true,       // 斜めに流れる領域で、模様も一緒に斜めに流す（試作。false なら模様はまっすぐ流れる）
+  patSkew: true,       // 斜めに流れる領域で、模様も一緒に斜めに流す（false なら模様はまっすぐ流れる）
   // 領域
   maxDepth: 7,
   minDepth: 2,

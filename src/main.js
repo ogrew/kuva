@@ -45,7 +45,7 @@ const CONFIG = {
   // ---- 模様（基本セルオートマトンの模様を重ねる）----
   patFrac: 0.2,           // 模様のレイヤーを重ねる領域の割合（即時反映）
   patRules: [30, 90, 110, 150], // 模様に使うルール（即時反映）
-  patSkew: true,          // 斜めに流れる領域で、模様も一緒に斜めに流す（試作。即時反映）
+  patSkew: true,          // 斜めに流れる領域で、模様も一緒に斜めに流す（即時反映）
   patInk: 'invert',       // 模様が 1 のマスの描き方 'tile'（領域ごとの1枚のタイル） | 'invert'（そのマスの色を反転）（試作。描画だけに効く）
   digits: false,  // マスに文字を重ねる（GUI では Glyphs。正方形のマスのときだけ。描画だけに効く）
   digitBy: 'lum', // 番号 0〜9 の決め方（DIGIT_MODES）：'lum'（明るさ順） | 'state'（K色の分類）
@@ -756,7 +756,7 @@ for (const r of Object.keys(PAT_RULES)) {
 const cPatInk = list(fe, 'patInk', 'Ink', { 'Tile': 'tile', 'Invert': 'invert' });
 cPatInk.on('change', () => { if (sim) showSim(); });
 tip(cPatInk, 'How cells where the pattern is 1 are drawn\nTile: one photo tile per region\nInvert: the cell\'s own color, inverted (negative)');
-// 試作：斜めに流れる領域で、模様（三角形）も一緒に斜めに流すか
+// 斜めに流れる領域で、模様（三角形）も一緒に斜めに流すか
 tip(onLive(fe.addBinding(CONFIG, 'patSkew', { label: 'Skew' }), 'patSkew'),
   'In diagonally flowing regions, the pattern flows diagonally too (the triangles lean). Off: the pattern flows straight');
 
