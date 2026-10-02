@@ -7,6 +7,7 @@
 //   digit：cols×rows×倍率3つ の R8UI 配列。タイルごとの数字 0〜9（マスに重ねる数字）
 //   blk ：cols×rows の R8UI。描く位置ごとの倍率の番号と大きなマスの中の位置（blockCodes）
 //   glyph：0〜9 の文字の形（R8 の10層、ミップマップ付き）。1層がマス1つぶん
+//   mean：cols×rows×倍率3つ の RGBA8 配列。タイルごとの平均色（縮小したマスの残りを塗る色）
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
 // 大きなマス（倍率 s）では、塗りつぶし・2色塗り・数字を大きなマス1つ（左上 = 描くタイル − 中の位置）として引く。
 // 写真はマスごとに引く（中の各マスには「左上のタイル＋中の位置」が入っているので、つながった1枚になる）
@@ -44,9 +45,68 @@ uniform highp sampler2DArray uGlyph;
 uniform bool uDigitsOn;
 uniform int uDigitMask;  // 描く数字（ビット d が 1 なら数字 d を描く）
 uniform vec3 uDigitColor;
+uniform highp sampler2DArray uMean;
+uniform bool uShrinkOn;
+uniform float uShrinkAmt;   // 0 = 縮めない、1 = ノイズの値がそのまま倍率
+uniform vec2 uNoiseK;       // グリッド座標 → ノイズの座標（写真の短辺 = 1 にして Scale を掛けたもの）
+uniform vec3 uNoiseOff;     // seed ごとのずれ
+uniform float uNoiseT;      // ノイズの時間（世代番号から決める）
+uniform float uNoiseBias;
+uniform float uNoiseContrast;
+uniform int uNoiseSteps;    // 0 = なめらか、2 以上 = その段数に丸める
 out vec4 outColor;
 const int FLAT_LAYERS = ${FLAT_LAYERS};
 const float SCALES[${SCALE_LIST.length}] = float[](${SCALE_LIST.map((s) => s.toFixed(1)).join(', ')});
+
+// 3D simplex noise（Ashima Arts / Stefan Gustavson, MIT）。戻り値はおよそ -1〜1
+vec4 permute(vec4 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
+vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+float snoise(vec3 v) {
+  const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = mod(i, 289.0);
+  vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  vec3 ns = 0.142857142857 * D.wyz - D.xzx;
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0) * 2.0 + 1.0;
+  vec4 s1 = floor(b1) * 2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+}
+
+// マス（大きなマスなら大きなマス1つ）の大きさの倍率。center = マスの中心（グリッド座標）
+float cellScale(vec2 center) {
+  float n = snoise(vec3((center - uImgMin) * uNoiseK, uNoiseT) + uNoiseOff) * 0.5 + 0.5;
+  float v = clamp((n - 0.5) * uNoiseContrast + 0.5 + uNoiseBias, 0.0, 1.0);
+  if (uNoiseSteps >= 2) v = floor(v * float(uNoiseSteps) * 0.9999) / float(uNoiseSteps - 1);
+  return 1.0 - uShrinkAmt * (1.0 - v);
+}
 
 // 描く位置 c にタイル si を描いたときの色（塗りつぶし、または写真）
 // q = 大きなマスの中の位置（0〜1）、bo = 大きなタイルの左上、li = 倍率の番号（倍率 1 なら q = fract(g)、bo = si、li = 0）
@@ -92,15 +152,35 @@ void main() {
   float bs = SCALES[li];
   ivec2 off = ivec2(int((b >> 2) & 3u), int((b >> 4) & 3u));
   vec2 q = (vec2(off) + fract(g)) / bs;
+  // 縮小：マス（大きなマス）の中心を基準に、ノイズで決めた倍率 k で縮めた位置 g から引き直す。
+  // 外側は、もとの位置に描いているタイルの平均色で塗る（描くタイル・倍率が変わる前の c, si, b で引く）
+  if (uShrinkOn) {
+    vec2 origin = vec2(c - off);
+    float k = cellScale(origin + 0.5 * bs);
+    vec2 q2 = (q - 0.5) / max(k, 1e-4) + 0.5;
+    ivec2 bo0 = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
+    vec3 mc = texelFetch(uMean, ivec3(bo0, li), 0).rgb;
+    if (k <= 0.0 || any(lessThan(q2, vec2(0.0))) || any(greaterThanEqual(q2, vec2(1.0)))) { outColor = vec4(mc, 1.0); return; }
+    vec2 g2 = origin + q2 * bs;
+    ivec2 c2 = clamp(ivec2(floor(g2)), ivec2(0), ivec2(uGrid) - 1);
+    uint b2 = texelFetch(uBlk, c2, 0).r;
+    ivec2 off2 = ivec2(int((b2 >> 2) & 3u), int((b2 >> 4) & 3u));
+    // 画面の右端・下端で欠けた大きなマスで、縮めた先が別のマス（大きなマスの外）になったら、そこも平均色
+    if (c2 - off2 != c - off || int(b2 & 3u) != li) { outColor = vec4(mc, 1.0); return; }
+    g = g2; c = c2; b = b2; off = off2; q = q2;
+    s = texelFetch(uSrc, c, 0).r;
+    si = ivec2(s % uCols, s / uCols);
+    gx /= k; gy /= k;
+  }
   // 倍率が変わった直後（まだ進んでいない領域）は中がそろっていないので、グリッドの内側に収める
   ivec2 bo = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
   vec3 col = tileColor(g, c, si, gx, gy, q, bo, li);
   // 数字：描くタイルの数字を、大きなマスいっぱいの大きさで重ねる（文字の形の1層 = マス1つぶん）。
-  // ミップマップの段は、マス内の位置の微分（= uScale / 倍率）から決める
+  // ミップマップの段は、マス内の位置の微分（= uScale / 倍率。縮小中はさらに / k）から決める
   if (uDigitsOn) {
     int d = int(texelFetch(uDigit, ivec3(bo, li), 0).r);
     if (((uDigitMask >> d) & 1) != 0) {
-      float a = textureGrad(uGlyph, vec3(q, float(d)), vec2(uScale.x / bs, 0.0), vec2(0.0, uScale.y / bs)).r;
+      float a = textureGrad(uGlyph, vec3(q, float(d)), vec2(gx.x * uGrid.x / bs, 0.0), vec2(0.0, gy.y * uGrid.y / bs)).r;
       col = mix(col, uDigitColor, a);
     }
   }
@@ -126,10 +206,11 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog;
     this.u = {};
-    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uMean', 'uShrinkOn', 'uShrinkAmt', 'uNoiseK', 'uNoiseOff', 'uNoiseT', 'uNoiseBias', 'uNoiseContrast', 'uNoiseSteps', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
     this.vao = gl.createVertexArray();
     this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.blkTex = null; this.flatOn = false; this.grid = null;
     this.digitTex = null; this.glyphTex = null; this.digitsOn = false; this.digitColor = [1, 1, 1]; this.digitMask = 0;
+    this.meanTex = null; this.shrink = null;
   }
 
   // 写真テクスチャの長辺の上限
@@ -144,6 +225,7 @@ export class Renderer {
     if (this.kindTex) gl.deleteTexture(this.kindTex);
     if (this.digitTex) gl.deleteTexture(this.digitTex);
     if (this.blkTex) gl.deleteTexture(this.blkTex);
+    if (this.meanTex) gl.deleteTexture(this.meanTex);
     this.grid = layout;
     this.texSize = [photo.width, photo.height];
 
@@ -189,7 +271,31 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     this.setBlocks(new Uint8Array(layout.cols * layout.rows));
+
+    this.meanTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.meanTex);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, layout.cols, layout.rows, SCALE_LIST.length);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   }
+
+  /** li = 倍率の番号（SCALE_LIST）、mean = その倍率のタイルごとの平均色（Float32Array、セル数 × 3） */
+  setMeans(li, mean) {
+    const gl = this.gl, { cols, rows } = this.grid, N = cols * rows;
+    const px = new Uint8Array(N * 4);
+    for (let i = 0; i < N; i++) {
+      px[i * 4] = mean[i * 3]; px[i * 4 + 1] = mean[i * 3 + 1]; px[i * 4 + 2] = mean[i * 3 + 2]; px[i * 4 + 3] = 255;
+    }
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.meanTex);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, li, cols, rows, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  }
+
+  /**
+   * マスの縮小。null なら縮めない。
+   * { amount, scale（写真の短辺あたりのノイズの数）, time, bias, contrast, steps, seed }
+   */
+  setShrink(p) { this.shrink = p && p.amount > 0 ? p : null; }
 
   /** 写真テクスチャの中身だけを差し替える（カメラ入力。photo は setPhoto と同じ寸法のキャンバス） */
   updatePhoto(photo) {
@@ -309,6 +415,7 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.digitTex);
     gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.glyphTex);
     gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.blkTex);
+    gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.meanTex);
     const u = this.u;
     gl.uniform1i(u.uPhoto, 0);
     gl.uniform1i(u.uSrc, 1);
@@ -329,6 +436,21 @@ export class Renderer {
     gl.uniform2f(u.uScale, scale[0], scale[1]);
     gl.uniform2f(u.uImgMin, min[0], min[1]);
     gl.uniform2f(u.uImgMax, min[0] + W / cw, min[1] + H / ch);
+    gl.uniform1i(u.uMean, 7);
+    const sk = this.shrink;
+    gl.uniform1i(u.uShrinkOn, sk ? 1 : 0);
+    if (sk) {
+      const k = sk.scale / Math.min(W, H); // 元写真 1px あたりのノイズの座標
+      // seed ごとのずれ（大きな値だと精度が落ちるので 0〜100 に収める）
+      const h = (x) => ((Math.imul(sk.seed ^ x, 0x9E3779B1) >>> 0) % 100000) / 1000;
+      gl.uniform1f(u.uShrinkAmt, Math.min(1, sk.amount));
+      gl.uniform2f(u.uNoiseK, cw * k, ch * k);
+      gl.uniform3f(u.uNoiseOff, h(0x51), h(0x2C7), h(0x1F3));
+      gl.uniform1f(u.uNoiseT, sk.time);
+      gl.uniform1f(u.uNoiseBias, sk.bias);
+      gl.uniform1f(u.uNoiseContrast, sk.contrast);
+      gl.uniform1i(u.uNoiseSteps, sk.steps);
+    }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

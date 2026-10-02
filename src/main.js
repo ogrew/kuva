@@ -54,6 +54,13 @@ const CONFIG = {
   kanaText: formatGlyphText([...GLYPH_SETS.kana.chars]), // ひらがなのとき番号 0〜9 に割り当てる文字（区切り。空の枠の番号は描かない。漢字・カタカナも通す）
   digitColor: '#ffffff', // 数字の色（全マス共通）
   digitShow: [0], // 表示する数字（全部に出すとうるさいので、一部だけ。ひらがなのときは使わない）
+  // ---- 縮小（ノイズでマスを縮め、残りをタイルの平均色で塗る。描画だけに効く。試作）----
+  shrink: 0,           // 縮める強さ（0 = OFF。1 ならノイズの値がそのまま倍率）
+  shrinkScale: 4,      // ノイズの細かさ（写真の短辺あたりのノイズの山の数）
+  shrinkSpeed: 2,      // ノイズが変わる速さ（100世代あたりの時間の進み）
+  shrinkBias: 0,       // ノイズの値に足す量（+ で縮むマスが減る）
+  shrinkContrast: 1.5, // ノイズの値の差を広げる倍率
+  shrinkSteps: 8,      // 倍率の段数（0 = なめらか）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
   // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
@@ -151,7 +158,7 @@ function rebuild() {
     an.width = g.cols * lx; an.height = g.rows * ly;
     camFrame = { g, pad, out, an, io: { cols: g.cols, rows: g.rows, Ax: lx, Ay: ly }, mean: new Float32Array(g.cols * g.rows * 3), dirty: false };
   }
-  layers = { sim, flat: [], digits: [], halves: [halves] };
+  layers = { sim, flat: [], digits: [], halves: [halves], means: [] };
   updateDigits();
   showSim();
   acc = 0;
@@ -172,6 +179,25 @@ function updateLayout() {
   renderer.setBlocks(blockCodes(sim));
   updateFlat();
   updateDigitLayers();
+  updateMeans();
+}
+
+// 縮小したマスの残りを塗る色（倍率ごとのタイルの平均色）。使っている倍率の分だけ。カメラ入力中は新しいフレームごとに作り直す
+function updateMeans() {
+  if (!sim || !(CONFIG.shrink > 0)) return;
+  for (const li of scalesInUse()) {
+    if (layers.means[li]) continue;
+    layers.means[li] = true;
+    renderer.setMeans(li, scaleSim(li).mean);
+  }
+}
+// 縮小のパラメータを描画に渡す（毎フレーム。時間は世代番号と次の世代までの割合から決める）
+function updateShrink() {
+  if (!sim || !(CONFIG.shrink > 0)) { renderer.setShrink(null); return; }
+  renderer.setShrink({
+    amount: CONFIG.shrink, scale: CONFIG.shrinkScale, time: (sim.gen + acc) * CONFIG.shrinkSpeed / 100,
+    bias: CONFIG.shrinkBias, contrast: CONFIG.shrinkContrast, steps: CONFIG.shrinkSteps, seed: sim.P.seed >>> 0,
+  });
 }
 
 // 倍率ごとの解析（塗りつぶし・数字に使う）。使っている倍率の分だけ、必要になったときに作って残す
@@ -333,6 +359,8 @@ function feedCamera() {
   // 数字もタイルの今の平均色から決め直す（描いていないときは印だけ消して、描き始めたときに作る）
   layers.digits = [];
   if (renderer.digitsOn) updateDigitLayers();
+  layers.means = [];
+  updateMeans();
   liveMs = liveMs * 0.9 + (performance.now() - t0) * 0.1;
 }
 function frame(t) {
@@ -353,6 +381,7 @@ function frame(t) {
     rate.t = t; rate.n = 0; rate.frames = camera.frames;
   }
 
+  updateShrink();
   renderer.draw(CONFIG.fit);
   borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit);
   updateInfo();
@@ -618,6 +647,26 @@ refreshDigits();
 const refreshFlat = () => cFlatSub.forEach((c) => { c.hidden = !(CONFIG.flatRatio > 0); });
 [cFlat, ...cFlatSub].forEach((c) => c.on('change', () => { refreshFlat(); updateFlat(); }));
 refreshFlat();
+
+// Shrink（試作：ノイズでマスを縮め、残りをタイルの平均色で塗る。描画だけに効く）
+const fs = pane.addFolder({ title: 'Shrink' });
+const cShrink = num(fs, 'shrink', 'Amount', 0, 1, 0.01);
+const cShrinkSub = [
+  num(fs, 'shrinkScale', '　└ Scale', 0.5, 40, 0.5),
+  num(fs, 'shrinkSpeed', '　└ Speed', 0, 20, 0.1),
+  num(fs, 'shrinkBias', '　└ Bias', -1, 1, 0.01),
+  num(fs, 'shrinkContrast', '　└ Contrast', 0.5, 6, 0.1),
+  num(fs, 'shrinkSteps', '　└ Steps', 0, 8, 1),
+];
+tip(cShrink, 'Shrinks each cell (a big cell as one) around its center by a noise field over the image, and fills the rest with the tile\'s average color. 1 = the noise value is the scale (down to nothing). 0 = off');
+tip(cShrinkSub[0], 'Noise features across the short side of the image. Larger = finer');
+tip(cShrinkSub[1], 'How fast the noise changes, per 100 generations (follows the generation, so it stops when paused)');
+tip(cShrinkSub[2], 'Added to the noise value. + = fewer cells shrink, − = more');
+tip(cShrinkSub[3], 'Spreads the noise values apart. Higher = more cells fully kept or fully shrunk');
+tip(cShrinkSub[4], 'Number of size steps. 0 = smooth');
+const refreshShrink = () => cShrinkSub.forEach((c) => { c.hidden = !(CONFIG.shrink > 0); });
+cShrink.on('change', () => { refreshShrink(); updateMeans(); });
+refreshShrink();
 
 // Evolve（時間とともに映像を変える仕組み）
 const fx = pane.addFolder({ title: 'Evolve' });
