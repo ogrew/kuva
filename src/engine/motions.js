@@ -95,7 +95,7 @@ function stepLines(g, sim, prev, next, flow) {
   const bSrc = sc === 1 ? g.bSrc : reps[g.bVal][0];
   const rule = g.table;
   const { x, y, w, h } = g;
-  const bw = Math.ceil(w / sc), bh = Math.ceil(h / sc); // 大きなマスの数（端は欠けたまま）
+  const bw = Math.ceil(w / sc), bh = Math.ceil(h / sc); // 大きなマスの数（画面の右端・下端は欠けたまま）
   // 実際に流れる向き：進行方向が固定されていればそれ、ALL なら領域の向き
   // sh：斜めに流れるときの横へのずれ（行の中で ±1。flow のときだけ）
   const [dir, sh0] = heading(g, sim), sh = flow ? sh0 : 0;
