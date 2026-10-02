@@ -5,7 +5,7 @@
 //   flat：cols×rows×(9層 × 倍率3つ) の RGBA8 配列。タイルごとの塗りつぶしの色（0層目の A = 255 なら塗る）。1〜8層目は2色塗りの半分ずつの色
 //   kind：cols×rows の R8UI。描く位置ごとの2色塗りの割り方（0 = 1色、1 = 横、2 = 縦、3 = ＼、4 = ／）
 //   digit：cols×rows×倍率3つ の R8UI 配列。タイルごとの数字 0〜9（マスに重ねる数字）
-//   blk ：cols×rows の R8UI。描く位置ごとの倍率の番号と大きなマスの中の位置、欠けた大きなマスの印（blockCodes）
+//   blk ：cols×rows の R8UI。描く位置ごとの倍率の番号と大きなマスの中の位置（blockCodes）
 //   glyph：0〜9 の文字の形（R8 の10層、ミップマップ付き）。1層がマス1つぶん
 //   mean：cols×rows×倍率3つ の RGBA8 配列。タイルごとの平均色（縮小したマスの残りを塗る色）
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
@@ -165,7 +165,7 @@ void main() {
     ivec2 c2 = clamp(ivec2(floor(g2)), ivec2(0), ivec2(uGrid) - 1);
     uint b2 = texelFetch(uBlk, c2, 0).r;
     ivec2 off2 = ivec2(int((b2 >> 2) & 3u), int((b2 >> 4) & 3u));
-    // 欠けた大きなマスで、縮めた先が別のマス（大きなマスの外）になったら、そこも平均色
+    // 画面の右端・下端で欠けた大きなマスで、縮めた先が別のマス（大きなマスの外）になったら、そこも平均色
     if (c2 - off2 != c - off || int(b2 & 3u) != li) { outColor = vec4(mc, 1.0); return; }
     g = g2; c = c2; b = b2; off = off2; q = q2;
     s = texelFetch(uSrc, c, 0).r;
@@ -176,15 +176,11 @@ void main() {
   ivec2 bo = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
   vec3 col = tileColor(g, c, si, gx, gy, q, bo, li);
   // 数字：描くタイルの数字を、大きなマスいっぱいの大きさで重ねる（文字の形の1層 = マス1つぶん）。
-  // 領域の端で欠けた大きなマスは、途中で切れないよう、中の各マスに1倍の文字を描く（倍率 1 の数字の層・描くタイル）。
-  // ミップマップの段は、マス内の位置の微分（= uScale / 倍率）から決める
+  // ミップマップの段は、マス内の位置の微分（= uScale / 倍率。縮小中はさらに / k）から決める
   if (uDigitsOn) {
-    bool cut = ((b >> 6) & 1u) != 0u;
-    int dl = cut ? 0 : li;
-    float ds = cut ? 1.0 : bs;
-    int d = int(texelFetch(uDigit, ivec3(cut ? si : bo, dl), 0).r);
+    int d = int(texelFetch(uDigit, ivec3(bo, li), 0).r);
     if (((uDigitMask >> d) & 1) != 0) {
-      float a = textureGrad(uGlyph, vec3(cut ? fract(g) : q, float(d)), vec2(gx.x * uGrid.x / ds, 0.0), vec2(0.0, gy.y * uGrid.y / ds)).r;
+      float a = textureGrad(uGlyph, vec3(q, float(d)), vec2(gx.x * uGrid.x / bs, 0.0), vec2(0.0, gy.y * uGrid.y / bs)).r;
       col = mix(col, uDigitColor, a);
     }
   }

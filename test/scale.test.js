@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine/sim.js';
 import { SCALE_LIST, blockCodes } from '../src/engine/scale.js';
+import { REGION_ALIGN } from '../src/engine/regions.js';
 import { fakeIO, hashSim } from './helpers.js';
 
 const base = { seed: 7, K: 6, chaos: 0.1, skipProb: 0, bigFrac: 1 };
@@ -135,8 +136,9 @@ test('大きなマス：分裂した子は親の倍率を引き継ぎ、大き�
       // 分裂の直後（1世代も進めていない）でも、子の中がそろっている
       if (aligned) checkBlocks(s, added.filter((g) => g.scale === a.scale));
     } else if (s.topologyEvents.merge > ev.merge) {
-      const big = removed[0].w * removed[0].h >= removed[1].w * removed[1].h ? removed[0] : removed[1];
-      assert.equal(added[0].bigU, big.bigU); assert.equal(added[0].bigV, big.bigV);
+      // 面積が同じなら、合体を始めたほう（どちらでもよい）
+      const area = (g) => g.w * g.h, max = Math.max(...removed.map(area));
+      assert.ok(removed.some((g) => area(g) === max && g.bigU === added[0].bigU && g.bigV === added[0].bigV));
       merges++;
     }
     s.step();
@@ -144,9 +146,8 @@ test('大きなマス：分裂した子は親の倍率を引き継ぎ、大き�
   assert.ok(splits > 0 && merges > 0);
 });
 
-test('描く位置の情報：倍率・中の位置と、領域の端で欠けた大きなマスの印', () => {
+test('描く位置の情報：倍率と大きなマスの中の位置', () => {
   const s = new Simulation(base, io()), codes = blockCodes(s), { cols } = s;
-  let cut = 0;
   for (const g of s.regions) {
     const k = g.scale;
     for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
@@ -155,11 +156,27 @@ test('描く位置の情報：倍率・中の位置と、領域の端で欠け�
       const bx = x - (x - g.x) % k, by = y - (y - g.y) % k;
       assert.equal(SCALE_LIST[b & 3], k);
       assert.deepEqual([(b >> 2) & 3, (b >> 4) & 3], [x - bx, y - by]);
-      // 欠けたマス = その大きなマスが領域の右端・下端からはみ出す
-      const partial = bx + k > g.x + g.w || by + k > g.y + g.h;
-      assert.equal((b >> 6) & 1, partial ? 1 : 0);
-      cut += partial;
     }
   }
-  assert.ok(cut > 0, 'この条件では欠けたマスがある');
+});
+
+test('領域の境目は4マスの倍数：大きなマスが欠けるのは画面の右端・下端に接する領域だけ（分裂・合体のあとも）', () => {
+  // 4の倍数でないグリッド・細長いマス・大きな cellSize（最小の領域が2マス）でも確かめる
+  for (const [cols, rows, cw, ch, strict] of [[122, 91, 1, 1, true], [90, 250, 24, 6, true], [26, 18, 1, 1, false]]) {
+    const s = new Simulation({ ...base, topology: true, topologyInterval: 12 }, { ...fakeIO(cols, rows), cw, ch });
+    const check = () => {
+      for (const g of s.regions) {
+        // 境目は4の倍数（最小の領域が数マスしかないときは2の倍数）か、画面の端
+        const a = strict ? REGION_ALIGN : 2, on = (v, n) => v % a === 0 || v === n;
+        assert.ok(on(g.x, cols) && on(g.x + g.w, cols) && on(g.y, rows) && on(g.y + g.h, rows), `[${g.x}, ${g.y}, ${g.w}, ${g.h}]`);
+        if (g.scale > 1) {
+          if (g.x + g.w < cols) assert.equal(g.w % g.scale, 0);
+          if (g.y + g.h < rows) assert.equal(g.h % g.scale, 0);
+        }
+      }
+    };
+    check();
+    for (let i = 0; i < 400; i++) { s.step(); if (i % 20 === 0) check(); }
+    assert.ok(s.topologyEvents.split > 0 && s.topologyEvents.merge > 0);
+  }
 });

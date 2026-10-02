@@ -9,7 +9,7 @@ import { MOTIONS, PAT_RULES } from './motions.js';
 import { analyzeScale, classifyScale, regionScale } from './scale.js';
 
 // 生成ロジックを変えたら上げる
-export const ENGINE_VERSION = 3;
+export const ENGINE_VERSION = 4;
 
 // E のテンポの段階：1世代あたりに進む回数。1 より大きいと1世代に複数回、1 未満なら 1/n 世代に1回
 export const TEMPOS = [2, 1, 1 / 2, 1 / 3, 1 / 4, 1 / 5];

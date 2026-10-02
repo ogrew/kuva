@@ -2,6 +2,7 @@
 import { hash, mulberry32 } from './rng.js';
 import { applyChaos } from './rules.js';
 import { MOTIONS } from './motions.js';
+import { alignCut } from './regions.js';
 
 // 長方形になる、辺全体を共有した組だけ合体できる。
 export function unionRect(a, b) {
@@ -59,9 +60,11 @@ export function evolveRegions(sim) {
       const vertical = a.w >= 2 * minX && (a.h < 2 * minY || rng() < (a.w * sim.cw > a.h * sim.ch ? 0.7 : 0.3));
       const length = vertical ? a.w : a.h, min = vertical ? minX : minY;
       let cut = Math.max(min, Math.min(length - min, Math.round(length * (0.35 + rng() * 0.3))));
-      // 大きなマスの領域は、切る位置を倍率の倍数にそろえる（子は同じ倍率を引き継ぐので、大きなマスの並びがそのまま残る）
+      // 切る位置は初期の分割と同じく REGION_ALIGN マスの倍数にそろえる（大きなマスの倍率でも割り切れるので、子は親の大きなマスの並びをそのまま使える）。
+      // そろえられなかったときも、大きなマスの領域は倍率の倍数にする
+      cut = alignCut(vertical ? a.x : a.y, length, cut, min);
       const s = a.scale, aligned = Math.round(cut / s) * s;
-      if (aligned >= min && aligned <= length - min) cut = aligned;
+      if (cut % s && aligned >= min && aligned <= length - min) cut = aligned;
       rects = vertical ? [[a.x, a.y, cut, a.h], [a.x + cut, a.y, a.w - cut, a.h]]
         : [[a.x, a.y, a.w, cut], [a.x, a.y + cut, a.w, a.h - cut]];
       removed = [a];
