@@ -61,6 +61,8 @@ const CONFIG = {
   shrinkBias: 0,       // ノイズの値に足す量（+ で縮むマスが減る）
   shrinkContrast: 1.5, // ノイズの値の差を広げる倍率
   shrinkSteps: 8,      // 倍率の段数（0 = なめらか）
+  shrinkFill: 'mean',  // 残りの塗り方 'mean'（タイルの平均色） | 'solid'（全マス共通の shrinkColor）（試作）
+  shrinkColor: '#000000', // 'solid' のときの色
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
   // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
@@ -191,12 +193,15 @@ function updateMeans() {
     renderer.setMeans(li, scaleSim(li).mean);
   }
 }
+// '#rrggbb' → [r, g, b]（0〜1）
+const rgb = (s) => { const h = parseInt(s.slice(1, 7), 16); return [(h >> 16 & 255) / 255, (h >> 8 & 255) / 255, (h & 255) / 255]; };
 // 縮小のパラメータを描画に渡す（毎フレーム。時間は世代番号と次の世代までの割合から決める）
 function updateShrink() {
   if (!sim || !(CONFIG.shrink > 0)) { renderer.setShrink(null); return; }
   renderer.setShrink({
     amount: CONFIG.shrink, scale: CONFIG.shrinkScale, time: (sim.gen + acc) * CONFIG.shrinkSpeed / 100,
     bias: CONFIG.shrinkBias, contrast: CONFIG.shrinkContrast, steps: CONFIG.shrinkSteps, seed: sim.P.seed >>> 0,
+    fill: CONFIG.shrinkFill === 'solid' ? rgb(CONFIG.shrinkColor) : null,
   });
 }
 
@@ -247,8 +252,7 @@ function updateDigits() {
   const kana = CONFIG.glyphSet === 'kana', chars = parseGlyphText(CONFIG.kanaText);
   const mask = kana ? chars.reduce((m, c, d) => (c ? m | (1 << d) : m), 0) : CONFIG.digitShow.reduce((m, d) => m | (1 << d), 0);
   const on = CONFIG.digits && !!g && g.cw === g.ch && mask !== 0;
-  const hex = parseInt(CONFIG.digitColor.slice(1, 7), 16);
-  renderer.setDigitStyle(on, [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255], mask);
+  renderer.setDigitStyle(on, rgb(CONFIG.digitColor), mask);
   if (on) updateDigitLayers();
   const set = CONFIG.glyphSet, font = kana ? CONFIG.kanaFont : CONFIG.digitFont, key = `${set}/${font}/${kana ? chars.join(',') : ''}`;
   if (on && glyphFont !== key) {
@@ -657,6 +661,8 @@ const cShrinkSub = [
   num(fs, 'shrinkBias', '　└ Bias', -1, 1, 0.01),
   num(fs, 'shrinkContrast', '　└ Contrast', 0.5, 6, 0.1),
   num(fs, 'shrinkSteps', '　└ Steps', 0, 8, 1),
+  list(fs, 'shrinkFill', '　└ Fill', { 'Mean': 'mean', 'Solid': 'solid' }),
+  fs.addBinding(CONFIG, 'shrinkColor', { label: '　└ Color' }),
 ];
 tip(cShrink, 'Shrinks each cell (a big cell as one) around its center by a noise field over the image, and fills the rest with the tile\'s average color. 1 = the noise value is the scale (down to nothing). 0 = off');
 tip(cShrinkSub[0], 'Noise features across the short side of the image. Larger = finer');
@@ -664,8 +670,14 @@ tip(cShrinkSub[1], 'How fast the noise changes, per 100 generations (follows the
 tip(cShrinkSub[2], 'Added to the noise value. + = fewer cells shrink, − = more');
 tip(cShrinkSub[3], 'Spreads the noise values apart. Higher = more cells fully kept or fully shrunk');
 tip(cShrinkSub[4], 'Number of size steps. 0 = smooth');
-const refreshShrink = () => cShrinkSub.forEach((c) => { c.hidden = !(CONFIG.shrink > 0); });
+tip(cShrinkSub[5], 'Color of the space left by shrinking\nMean: the average color of the tile drawn there\nSolid: one color for every cell (Color)');
+tip(cShrinkSub[6], 'Fill color of the shrunk space (Solid)');
+const refreshShrink = () => {
+  cShrinkSub.forEach((c) => { c.hidden = !(CONFIG.shrink > 0); });
+  cShrinkSub[6].hidden = !(CONFIG.shrink > 0) || CONFIG.shrinkFill !== 'solid';
+};
 cShrink.on('change', () => { refreshShrink(); updateMeans(); });
+cShrinkSub[5].on('change', refreshShrink);
 refreshShrink();
 
 // Evolve（時間とともに映像を変える仕組み）
