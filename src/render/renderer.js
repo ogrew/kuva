@@ -54,6 +54,7 @@ uniform float uNoiseT;      // ノイズの時間（世代番号から決める�
 uniform float uNoiseBias;
 uniform float uNoiseContrast;
 uniform int uNoiseSteps;    // 0 = なめらか、2 以上 = その段数に丸める
+uniform vec4 uShrinkFill;   // a = 1 なら残りを全マス共通のこの色で塗る（0 ならタイルの平均色）
 out vec4 outColor;
 const int FLAT_LAYERS = ${FLAT_LAYERS};
 const float SCALES[${SCALE_LIST.length}] = float[](${SCALE_LIST.map((s) => s.toFixed(1)).join(', ')});
@@ -159,7 +160,7 @@ void main() {
     float k = cellScale(origin + 0.5 * bs);
     vec2 q2 = (q - 0.5) / max(k, 1e-4) + 0.5;
     ivec2 bo0 = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
-    vec3 mc = texelFetch(uMean, ivec3(bo0, li), 0).rgb;
+    vec3 mc = uShrinkFill.a > 0.5 ? uShrinkFill.rgb : texelFetch(uMean, ivec3(bo0, li), 0).rgb;
     if (k <= 0.0 || any(lessThan(q2, vec2(0.0))) || any(greaterThanEqual(q2, vec2(1.0)))) { outColor = vec4(mc, 1.0); return; }
     vec2 g2 = origin + q2 * bs;
     ivec2 c2 = clamp(ivec2(floor(g2)), ivec2(0), ivec2(uGrid) - 1);
@@ -206,7 +207,7 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog;
     this.u = {};
-    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uMean', 'uShrinkOn', 'uShrinkAmt', 'uNoiseK', 'uNoiseOff', 'uNoiseT', 'uNoiseBias', 'uNoiseContrast', 'uNoiseSteps', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uMean', 'uShrinkOn', 'uShrinkAmt', 'uNoiseK', 'uNoiseOff', 'uNoiseT', 'uNoiseBias', 'uNoiseContrast', 'uNoiseSteps', 'uShrinkFill', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
     this.vao = gl.createVertexArray();
     this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.blkTex = null; this.flatOn = false; this.grid = null;
     this.digitTex = null; this.glyphTex = null; this.digitsOn = false; this.digitColor = [1, 1, 1]; this.digitMask = 0;
@@ -293,7 +294,8 @@ export class Renderer {
 
   /**
    * マスの縮小。null なら縮めない。
-   * { amount, scale（写真の短辺あたりのノイズの数）, time, bias, contrast, steps, seed }
+   * { amount, scale（写真の短辺あたりのノイズの数）, time, bias, contrast, steps, seed,
+   *   fill（残りを塗る色 [r, g, b]（0〜1）。null ならタイルの平均色） }
    */
   setShrink(p) { this.shrink = p && p.amount > 0 ? p : null; }
 
@@ -450,6 +452,8 @@ export class Renderer {
       gl.uniform1f(u.uNoiseBias, sk.bias);
       gl.uniform1f(u.uNoiseContrast, sk.contrast);
       gl.uniform1i(u.uNoiseSteps, sk.steps);
+      const f = sk.fill;
+      gl.uniform4f(u.uShrinkFill, f ? f[0] : 0, f ? f[1] : 0, f ? f[2] : 0, f ? 1 : 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
