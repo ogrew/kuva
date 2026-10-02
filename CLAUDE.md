@@ -43,6 +43,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `src/engine/digits.js` | マスに重ねる文字の番号（タイルごとの 0〜9）。描画だけに効く |
 | `src/render/glyphs.js` | 数字 0〜9・ひらがな あ〜こ の文字の形（Canvas 2D。フォント、または 7セグ・ドットをコードで描く） |
 | `src/render/renderer.js` | WebGL2。写真テクスチャと `src` テクスチャ（R32I）など（塗りつぶし・数字の分も）。`snapshot()` は PNG 書き出し用に、見えない描画先に元写真の範囲だけを描く |
+| `public/favicon.svg` | favicon。16×16 マスのドットの k の数行だけを横にずらしたもの（崩れた k） |
 | `samples/` | サンプル画像。開いたときにランダムに1枚を読み込む。一覧は `import.meta.glob` でビルド時に作るので、置くだけで候補に入る。公開される（AI 生成の画像。埋め込みの XMP は生成元のラベルと ID だけ） |
 | `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
 | `experiments/regions.html` | 開発サーバ専用の比較ページ。同じ写真・seed・世代で「従来／分裂・合体／漏れ／両方」の4画面を並べる（Space・R・B、写真のドロップ）。公開ビルドには入れていない |
