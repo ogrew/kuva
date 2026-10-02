@@ -586,7 +586,7 @@ tip(num(f2, 'gps', 'Speed', 0.5, 48, 0.5), 'Generations per second'); // 再生�
 const f3 = pane.addFolder({ title: 'Render' });
 tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
 tip(f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' }),
-  'Show region boundaries as thin white lines. Also included in saved PNGs');
+  'Show region boundaries as thin white lines (D key). Also included in saved PNGs');
 const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.1);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
@@ -765,7 +765,7 @@ pane.addBlade({ view: 'separator' });
 {
   const keys = document.createElement('dl');
   keys.className = 'keys';
-  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG'], ['C', 'CAMERA']]) {
+  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG'], ['C', 'CAMERA'], ['D', 'BORDERS']]) {
     keys.insertAdjacentHTML('beforeend', `<dt>${k}</dt><dd>${v}</dd>`);
   }
   // パネルの中身の入れ物に入れる（タイトルを押して畳んだときに一緒に隠れるように）
@@ -841,6 +841,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'r') rebuild();
   else if (k === 's') savePNG();
   else if (k === 'c') { CONFIG.camera = !CONFIG.camera; guiSync(); setCamera(CONFIG.camera); }
+  else if (k === 'd') { CONFIG.regionBorders = !CONFIG.regionBorders; guiSync(); } // 描くのは毎フレームの再生ループ
 });
 
 // ---------- D&D ----------
