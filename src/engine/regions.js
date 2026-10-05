@@ -1,20 +1,20 @@
 // regions.js — 領域の再帰分割（kivi engine.js の subdivide を流用）
 import { clamp } from './rng.js';
 
-// 領域の境目は、グリッドの原点から REGION_ALIGN マスの倍数にそろえる。大きなマスの倍率（2・4）で割り切れるので、
+// 領域の境目は、グリッドの原点から REGION_ALIGN マスの倍数にそろえる。大きなマスの倍率（2・4・8）で割り切れるので、
 // 大きなマスが領域の端で欠けるのは、画面の右端・下端に接する領域だけになる
-export const REGION_ALIGN = 4;
+export const REGION_ALIGN = 8;
 
 /**
  * 切る位置（領域の先頭 pos からの長さ cut）を、近い REGION_ALIGN の倍数にそろえる。両側が min 以上になる倍数を選ぶ。
- * 最小の長さぎりぎりの領域では倍数が入らないことがあるので、REGION_ALIGN / 2 マスまでは最小を割ってよい（2マスは残す）。
- * それでも入らなければ（最小の領域が数マスしかない大きな cellSize）2 の倍数にそろえ、それも無理ならそのまま
+ * 最小の長さぎりぎりの領域では倍数が入らないことがあるので、2マスまでは最小を割ってよい（2マスは残す）。
+ * それでも入らなければ 4 の倍数、2 の倍数（最小の領域が数マスしかない大きな cellSize）の順にそろえ、それも無理ならそのまま
  */
 export function alignCut(pos, len, cut, min) {
-  for (const a of [REGION_ALIGN, 2]) {
+  for (const a of [REGION_ALIGN, 4, 2]) {
     const lo = Math.floor((pos + cut) / a) * a - pos, hi = lo + a;
     const order = cut - lo <= hi - cut ? [lo, hi] : [hi, lo];
-    for (const m of [min, Math.max(2, min - a / 2)]) for (const v of order) if (v >= m && v <= len - m) return v;
+    for (const m of [min, Math.max(2, min - Math.min(2, a / 2))]) for (const v of order) if (v >= m && v <= len - m) return v;
   }
   return cut;
 }

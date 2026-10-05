@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine/sim.js';
-import { SCALE_LIST, blockCodes } from '../src/engine/scale.js';
+import { SCALE_LIST, BIG_SCALES, blockCodes, regionScale } from '../src/engine/scale.js';
 import { REGION_ALIGN } from '../src/engine/regions.js';
 import { fakeIO, hashSim } from './helpers.js';
 
@@ -26,13 +26,31 @@ function checkBlocks(s, regions = s.regions) {
   }
 }
 
-test('大きなマス：倍率は 2・4 で、小さい領域は小さい倍率に落ちる', () => {
-  const s = new Simulation(base, io());
+test('大きなマス：倍率は 2・4・8 で、小さい領域は小さい倍率に落ちる', () => {
+  const s = new Simulation(base, fakeIO(240, 180));
   const scales = new Set(s.regions.map((g) => g.scale));
-  assert.ok(scales.has(2) && scales.has(4) && !scales.has(3));
+  assert.ok(scales.has(2) && scales.has(4) && scales.has(8) && !scales.has(3));
   for (const g of s.regions) assert.ok(Math.ceil(Math.min(g.w, g.h) / g.scale) >= s.P.bigMinBlocks || g.scale === 1);
   const none = new Simulation({ ...base, bigFrac: 0 }, io());
   assert.ok(none.regions.every((g) => g.scale === 1));
+});
+
+test('大きなマス：入る倍率の中から、大きいほうを選びやすい（2:4:8 = 1:2:4）', () => {
+  const sim = { cols: 1000, rows: 1000, P: { bigFrac: 1, bigMinBlocks: 4 } };
+  const count = (w, h) => {
+    const n = { 1: 0, 2: 0, 4: 0, 8: 0 };
+    for (let i = 0; i < 700; i++) n[regionScale(sim, { motion: 'flow', bigU: 0, bigV: (i + 0.5) / 700, x: 0, y: 0, w, h })]++;
+    return n;
+  };
+  assert.deepEqual(count(64, 40), { 1: 0, 2: 100, 4: 200, 8: 400 }); // 8 まで入る
+  assert.deepEqual(count(64, 24), { 1: 0, 2: 233, 4: 467, 8: 0 });   // 4 まで（8 は短い辺に4つ並ばない）
+  assert.deepEqual(count(36, 36), { 1: 0, 2: 233, 4: 467, 8: 0 });   // 8 で割り切れない
+  assert.deepEqual(count(12, 12), { 1: 0, 2: 700, 4: 0, 8: 0 });
+  // 8 に選ばれた領域は、8 が入らなくなると 4 に落ちる
+  for (let i = 0; i < 100; i++) {
+    const g = { motion: 'flow', bigU: 0, bigV: i / 100, x: 0, y: 0, w: 64, h: 40 };
+    if (regionScale(sim, g) === 8) assert.equal(regionScale(sim, { ...g, h: 24 }), 4);
+  }
 });
 
 test('大きなマス：中の各マスがそろい、s 世代に1回だけ変わる', () => {
@@ -42,7 +60,7 @@ test('大きなマス：中の各マスがそろい、s 世代に1回だけ変�
     for (let i = 0; i < 60; i++) {
       const before = s.src.slice(), bs = s.cur.state.slice();
       s.step();
-      if (i >= 3) checkBlocks(s);
+      if (i >= Math.max(...BIG_SCALES) - 1) checkBlocks(s); // 最初に進むまで（最大 s − 1 世代）は元写真のまま
       for (const g of s.regions) {
         let changed = false;
         for (let y = g.y; y < g.y + g.h && !changed; y++) for (let x = g.x; x < g.x + g.w; x++) {
@@ -155,19 +173,19 @@ test('描く位置の情報：倍率と大きなマスの中の位置', () => {
       if (k === 1) { assert.equal(b, 0); continue; }
       const bx = x - (x - g.x) % k, by = y - (y - g.y) % k;
       assert.equal(SCALE_LIST[b & 3], k);
-      assert.deepEqual([(b >> 2) & 3, (b >> 4) & 3], [x - bx, y - by]);
+      assert.deepEqual([(b >> 2) & 7, (b >> 5) & 7], [x - bx, y - by]);
     }
   }
 });
 
-test('領域の境目は4マスの倍数：大きなマスが欠けるのは画面の右端・下端に接する領域だけ（分裂・合体のあとも）', () => {
+test('領域の境目は8マスの倍数（小さい領域は4マス）：大きなマスが欠けるのは画面の右端・下端に接する領域だけ（分裂・合体のあとも）', () => {
   // 4の倍数でないグリッド・細長いマス・大きな cellSize（最小の領域が2マス）でも確かめる
   for (const [cols, rows, cw, ch, strict] of [[122, 91, 1, 1, true], [90, 250, 24, 6, true], [26, 18, 1, 1, false]]) {
     const s = new Simulation({ ...base, topology: true, topologyInterval: 12 }, { ...fakeIO(cols, rows), cw, ch });
     const check = () => {
       for (const g of s.regions) {
-        // 境目は4の倍数（最小の領域が数マスしかないときは2の倍数）か、画面の端
-        const a = strict ? REGION_ALIGN : 2, on = (v, n) => v % a === 0 || v === n;
+        // 境目は8の倍数（小さい領域では4の倍数、最小の領域が数マスしかないときは2の倍数）か、画面の端
+        const a = strict ? REGION_ALIGN / 2 : 2, on = (v, n) => v % a === 0 || v === n;
         assert.ok(on(g.x, cols) && on(g.x + g.w, cols) && on(g.y, rows) && on(g.y + g.h, rows), `[${g.x}, ${g.y}, ${g.w}, ${g.h}]`);
         if (g.scale > 1) {
           if (g.x + g.w < cols) assert.equal(g.w % g.scale, 0);

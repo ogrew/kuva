@@ -60,7 +60,7 @@ export function evolveRegions(sim) {
       const vertical = a.w >= 2 * minX && (a.h < 2 * minY || rng() < (a.w * sim.cw > a.h * sim.ch ? 0.7 : 0.3));
       const length = vertical ? a.w : a.h, min = vertical ? minX : minY;
       let cut = Math.max(min, Math.min(length - min, Math.round(length * (0.35 + rng() * 0.3))));
-      // 切る位置は初期の分割と同じく REGION_ALIGN マスの倍数にそろえる（大きなマスの倍率でも割り切れるので、子は親の大きなマスの並びをそのまま使える）。
+      // 切る位置は初期の分割と同じく REGION_ALIGN（8）マスの倍数にそろえる（大きなマスの倍率でも割り切れるので、子は親の大きなマスの並びをそのまま使える）。
       // そろえられなかったときも、大きなマスの領域は倍率の倍数にする
       cut = alignCut(vertical ? a.x : a.y, length, cut, min);
       const s = a.scale, aligned = Math.round(cut / s) * s;

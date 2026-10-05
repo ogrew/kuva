@@ -1,12 +1,14 @@
-// scale.js — 大きなマス。一部の領域では s×s マス（s = 2・4）を1マスとして CA を計算する。
+// scale.js — 大きなマス。一部の領域では s×s マス（s = 2・4・8）を1マスとして CA を計算する。
 // 状態・タイルは基本のマス目の配列のまま持つ。大きなマスの値は左上のマスに置き、
 // 中の各マスには同じ状態と「出どころのタイル＋大きなマスの中の位置」を書き写す（fillBlocks）。
 // → 隣の領域から読む処理（漏れ・合体）や描画は、どの倍率でも基本のマスとして扱える。
 // 倍率はハッシュで決める（乱数は使わない）。bigFrac = 0 なら全領域が 1 で、従来と同じ映像。
 import { hash } from './rng.js';
 
-export const BIG_SCALES = [2, 4];
-// 描画に渡す倍率の番号（0 = 倍率 1、1 = 2、2 = 4）
+export const BIG_SCALES = [2, 4, 8];
+// 倍率を選ぶ重み（BIG_SCALES と同じ順）。大きい倍率は入る領域が少ないので、入る領域では大きいほうを選びやすくする
+const BIG_WEIGHTS = [1, 2, 4];
+// 描画に渡す倍率の番号（0 = 倍率 1、1 = 2、2 = 4、3 = 8）
 export const SCALE_LIST = [1, ...BIG_SCALES];
 
 /**
@@ -72,21 +74,25 @@ export function classifyScale(sim, s, cls, bmean, cand = null) {
 }
 
 /**
- * 領域の倍率。hash(seed, 領域) < bigFrac の領域だけ 2 か 4（半々）。
- * 大きなマスが短いほうの辺に bigMinBlocks 個並ばないなら、小さい倍率に落とす。元写真のままの領域は 1
- * 辺が倍率で割り切れない（大きなマスが領域の端で欠ける）ときも落とす。ただし画面の右端・下端に接する辺は欠けてよい。
- * 領域の境目は4マスの倍数にそろえているので（regions.js の alignCut）、落ちるのはとても小さい領域どうしが合体したときくらい
+ * 領域の倍率。hash(seed, 領域) < bigFrac の領域だけ 2・4・8 のどれか。
+ * 候補は、大きなマスが短いほうの辺に bigMinBlocks 個並び、辺が倍率で割り切れる倍率（画面の右端・下端に接する辺は欠けてよい）。
+ * 候補の中から BIG_WEIGHTS の重みで bigV により選ぶ（2:4:8 = 1:2:4。8 が入る領域では 8 になりやすく、4 までなら 4 になりやすい）。
+ * bigV が小さいほど大きい倍率なので、領域が小さくなって大きい倍率が入らなくなると、だいたい次に大きい倍率に落ちる。元写真のままの領域は 1
+ * 領域の境目は8マスの倍数にそろえているので（regions.js の alignCut）、割り切れずに落ちるのはとても小さい領域どうしが合体したときくらい
  * bigFrac を上げると大きなマスの領域が増えるだけで、入れ替わらない
  */
 export function regionScale(sim, g) {
   const P = sim.P;
   if (g.motion === 'still' || !(g.bigU < P.bigFrac)) return 1;
-  // 落とす先も候補の中から（4 → 2 → 1）
-  for (let k = Math.floor(g.bigV * BIG_SCALES.length); k >= 0; k--) {
+  let total = 0;
+  const cand = [];
+  for (let k = BIG_SCALES.length - 1; k >= 0; k--) {
     const s = BIG_SCALES[k];
     const fits = (g.w % s === 0 || g.x + g.w === sim.cols) && (g.h % s === 0 || g.y + g.h === sim.rows);
-    if (fits && Math.ceil(Math.min(g.w, g.h) / s) >= P.bigMinBlocks) return s;
+    if (fits && Math.ceil(Math.min(g.w, g.h) / s) >= P.bigMinBlocks) { cand.push(k); total += BIG_WEIGHTS[k]; }
   }
+  let u = g.bigV * total;
+  for (const k of cand) if ((u -= BIG_WEIGHTS[k]) < 0) return BIG_SCALES[k];
   return 1;
 }
 
@@ -117,8 +123,8 @@ export function fillBlocks(g, sim, next, s) {
 
 /**
  * 描く位置ごとの倍率と、大きなマスの中の位置（描画だけに使う）。
- * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 4
- * （中の位置は2ビットずつなので、倍率は 4 まで）
+ * 値 = 倍率の番号（SCALE_LIST、下位2ビット）| 横の位置 << 2 | 縦の位置 << 5
+ * （中の位置は3ビットずつなので、倍率は 8 まで）
  */
 export function blockCodes(sim) {
   const { cols } = sim, out = new Uint8Array(sim.cols * sim.rows);
@@ -126,7 +132,7 @@ export function blockCodes(sim) {
     const s = g.scale, li = SCALE_LIST.indexOf(s);
     if (li <= 0) continue;
     for (let y = g.y; y < g.y + g.h; y++) for (let x = g.x; x < g.x + g.w; x++) {
-      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 4;
+      out[y * cols + x] = li | ((x - g.x) % s) << 2 | ((y - g.y) % s) << 5;
     }
   }
   return out;
