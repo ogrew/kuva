@@ -17,7 +17,7 @@ const CONFIG = {
   cellSize: 24,   // 1マスの幅（元写真の px）
   cellAspect: 4,  // 1マスの高さの比率（ASPECTS の番号）。高さ = 幅 × 比率。4 = 1:1
   K: 7,           // 状態数 = パレット色数
-  bigFrac: 0.3,   // 大きなマス（2×2・4×4 マスを1マスとして計算する）にする領域の割合（即時反映）
+  bigFrac: 0.3,   // 大きなマス（2×2・4×4・8×8 マスを1マスとして計算する）にする領域の割合（即時反映）
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 12,        // 世代/秒（即時反映）
   motion: 'flow', // 動き方 'flow'（流れる） | 'ca'（その場で変化）
@@ -587,7 +587,7 @@ tip(cAspect, 'Cell height = width × 1/5 … 5');
 aspectName();
 tip(onRebuild(num(f1, 'K', 'Colors', 2, 12, 1)), 'Number of states (K). Cells are clustered into K colors by k-means');
 tip(onLive(num(f1, 'bigFrac', 'Big cells', 0, 1, 0.1), 'bigFrac', () => sim && showSim()), // 一時停止中も描画の情報を更新する
-  'Share of regions computed with 2×2 or 4×4 cells as one cell (half each). They step every 2 or 4 generations, so everything flows at the same speed on screen. 0 = off');
+  'Share of regions computed with 2×2, 4×4 or 8×8 cells as one cell. Larger sizes are preferred where they fit. They step every 2, 4 or 8 generations, so everything flows at the same speed on screen. 0 = off');
 
 // Motion（動き方と速さ）
 const f2 = pane.addFolder({ title: 'Motion' });

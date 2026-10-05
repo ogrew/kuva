@@ -195,7 +195,7 @@ void main() {
   uint b = texelFetch(uBlk, c, 0).r;
   int li = int(b & 3u);
   float bs = SCALES[li];
-  ivec2 off = ivec2(int((b >> 2) & 3u), int((b >> 4) & 3u));
+  ivec2 off = ivec2(int((b >> 2) & 7u), int((b >> 5) & 7u));
   vec2 q = (vec2(off) + fract(g)) / bs;
   float k = 1.0;
   // 縮小：マス（大きなマス）の中心を基準に、ノイズで決めた倍率 k で縮めた位置 g から引き直す。
@@ -211,7 +211,7 @@ void main() {
     vec2 g2 = origin + q2 * bs;
     ivec2 c2 = clamp(ivec2(floor(g2)), ivec2(0), ivec2(uGrid) - 1);
     uint b2 = texelFetch(uBlk, c2, 0).r;
-    ivec2 off2 = ivec2(int((b2 >> 2) & 3u), int((b2 >> 4) & 3u));
+    ivec2 off2 = ivec2(int((b2 >> 2) & 7u), int((b2 >> 5) & 7u));
     // 画面の右端・下端で欠けた大きなマスで、縮めた先が別のマス（大きなマスの外）になったら、そこも平均色
     if (c2 - off2 != c - off || int(b2 & 3u) != li) { outColor = emit(mc, 0.0); return; }
     g = g2; c = c2; b = b2; off = off2; q = q2;

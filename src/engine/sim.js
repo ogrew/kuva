@@ -9,7 +9,7 @@ import { MOTIONS, PAT_RULES } from './motions.js';
 import { analyzeScale, classifyScale, regionScale } from './scale.js';
 
 // 生成ロジックを変えたら上げる
-export const ENGINE_VERSION = 4;
+export const ENGINE_VERSION = 5;
 
 // E のテンポの段階：1世代あたりに進む回数。1 より大きいと1世代に複数回、1 未満なら 1/n 世代に1回
 export const TEMPOS = [2, 1, 1 / 2, 1 / 3, 1 / 4, 1 / 5];
@@ -52,7 +52,7 @@ export const ENGINE_DEFAULTS = {
   patFrac: 0,          // 模様のレイヤーを重ねる領域の割合（0 = なし。GUI の初期値は main.js）
   patMinWidth: 24,     // 模様を重ねる領域の、行の長さ（マス）の最小。小さいと三角形が育たない
   patRules: [30, 90, 110, 150], // 模様に使うルール（PAT_RULES の番号）。領域ごとにこの中からハッシュで1つ選ぶ
-  bigFrac: 0,          // 大きなマス（2×2・4×4 マスを1マスとして計算する）にする領域の割合（0 = なし）
+  bigFrac: 0,          // 大きなマス（2×2・4×4・8×8 マスを1マスとして計算する）にする領域の割合（0 = なし）
   bigMinBlocks: 4,     // 大きなマスが短いほうの辺にこれだけ並ばない領域は、小さい倍率に落とす
   stagger: 0,          // 領域が崩れ始める世代のばらつき。領域ごとに 0〜stagger 世代目まで元写真のまま待つ（0 = 一斉に始まる）
   direction: 'all',    // 進行方向 'all'（領域ごと） | DIRECTIONS のキー（上下左右・斜め4方向）。固定中は E の向き変更も効かない
