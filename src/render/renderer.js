@@ -11,6 +11,8 @@
 // フラグメントシェーダで 画面のピクセル → セル → src → タイルの位置 → マス内の相対位置 で写真を引く。
 // 大きなマス（倍率 s）では、塗りつぶし・2色塗り・数字を大きなマス1つ（左上 = 描くタイル − 中の位置）として引く。
 // 写真はマスごとに引く（中の各マスには「左上のタイル＋中の位置」が入っているので、つながった1枚になる）
+// 擬似3D（Depth、試作）：1回目でマスの色と高さ（A）を見えない描画先に描き、2回目（DEPTH_FS）で
+// 高さから影（柔らかい影）と接地の暗がり（AO）を付けて画面に描く。真上からの正射影。光の高さは 45° に固定
 
 import { FLAT_LAYERS } from '../engine/flat.js';
 import { SCALE_LIST } from '../engine/scale.js';
@@ -55,7 +57,12 @@ uniform float uNoiseBias;
 uniform float uNoiseContrast;
 uniform int uNoiseSteps;    // 0 = なめらか、2 以上 = その段数に丸める
 uniform vec4 uShrinkFill;   // a = 1 なら残りを全マス共通のこの色で塗る（0 ならタイルの平均色）
+uniform bool uDepthOn;      // A に高さを書く（0 = 余白、1/255〜1 = 高さ 0〜DEPTH_MAX）
+uniform int uDepthMode;     // 高さの式（heightOf）
+uniform float uDepthW;      // 大きさの効き（0 = 色だけ。+ なら小さいマスほど高く、− なら大きいマスほど高く）
+uniform float uAccent;      // 高さの緩急（タイルごとの揺らぎ・突き抜けて高いマス・極端に低いマス。0 = なし）
 out vec4 outColor;
+const float DEPTH_MAX = 8.0; // A に書ける高さの上限（突き抜けて高いマスの分まで）
 const int FLAT_LAYERS = ${FLAT_LAYERS};
 const float SCALES[${SCALE_LIST.length}] = float[](${SCALE_LIST.map((s) => s.toFixed(1)).join(', ')});
 
@@ -111,7 +118,8 @@ float cellScale(vec2 center) {
 
 // 描く位置 c にタイル si を描いたときの色（塗りつぶし、または写真）
 // q = 大きなマスの中の位置（0〜1）、bo = 大きなタイルの左上、li = 倍率の番号（倍率 1 なら q = fract(g)、bo = si、li = 0）
-vec3 tileColor(vec2 g, ivec2 c, ivec2 si, vec2 gx, vec2 gy, vec2 q, ivec2 bo, int li) {
+// face = 高さを決める面の色（塗りつぶしならその色。写真なら呼ぶ側がタイルの平均色を入れておく）
+vec3 tileColor(vec2 g, ivec2 c, ivec2 si, vec2 gx, vec2 gy, vec2 q, ivec2 bo, int li, inout vec3 face) {
   vec2 sc = vec2(si);
   // 塗りつぶし：元の位置にないタイル（CA で運ばれてきたもの）だけを塗る
   if (uFlatOn && si != c) {
@@ -125,6 +133,7 @@ vec3 tileColor(vec2 g, ivec2 c, ivec2 si, vec2 gx, vec2 gy, vec2 q, ivec2 bo, in
                   : k == 3u ? (q.x < q.y ? 5 : 6) : (q.x + q.y < 1.0 ? 7 : 8);
         f = texelFetch(uFlat, ivec3(bo, L + layer), 0);
       }
+      face = f.rgb;
       return f.rgb;
     }
   }
@@ -133,6 +142,38 @@ vec3 tileColor(vec2 g, ivec2 c, ivec2 si, vec2 gx, vec2 gy, vec2 q, ivec2 bo, in
   vec2 local = clamp(fract(g) * texCell, vec2(0.5), texCell - 0.5);
   vec2 uv = (sc * texCell + local) / uTexSize;
   return textureGrad(uPhoto, uv, gx, gy).rgb;
+}
+
+// 高さ。L = 面の明るさ（明るいほど高い）、S = マスの大きさ（基本のマス = 1）。
+// uDepthW が + なら小さいほど高く、− なら大きいほど高く（S = 1 ではどちらも 1 倍）
+float heightOf(float L, float S) {
+  float big = pow(max(S, 0.25), -uDepthW);
+  float ls = 0.5 * log2(max(S, 0.25));
+  float size = clamp(uDepthW >= 0.0 ? 1.0 - ls : 1.0 + ls, 0.0, 2.0); // Sum の大きさの項（S = 1 で 1）
+  if (uDepthMode == 0) return mix(L, size, abs(uDepthW));                                       // Sum：足し合わせ
+  if (uDepthMode == 1) return L * big;                                                         // Product：掛け合わせ
+  if (uDepthMode == 2) return min(floor(L * 5.0), 4.0) / 4.0 * big;                            // Terrace：5段
+  return pow(L, 2.5) * big;                                                                    // Peak：明るいところだけ高い
+}
+// 高さの緩急：写真タイルごとの倍率（タイルと一緒に動く）。対数正規の揺らぎに、まれに塔（×3〜6）と穴（×0.08）を混ぜる
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+float accent(ivec2 bo, int li) {
+  if (uAccent <= 0.0) return 1.0;
+  vec2 p = vec2(bo) + vec2(float(li) * 4099.0, 0.0);
+  float z = (hash12(p) + hash12(p + 17.1) + hash12(p + 41.7) - 1.5) * 2.0; // およそ標準正規
+  float m = exp(0.5 * uAccent * z);
+  float d = hash12(p + 73.3);
+  if (d < 0.05 * uAccent) m *= 3.0 + 3.0 * fract(d * 97.0);
+  else if (d > 1.0 - 0.15 * uAccent) m *= 0.08;
+  return m;
+}
+// A に高さを書く。低いところの差が残るよう平方根で詰める（0 = 余白、1/255〜1 = 高さ 0〜DEPTH_MAX）
+vec4 emit(vec3 col, float h) {
+  return uDepthOn ? vec4(col, (1.0 + sqrt(clamp(h / DEPTH_MAX, 0.0, 1.0)) * 254.0) / 255.0) : vec4(col, 1.0);
 }
 
 void main() {
@@ -156,22 +197,23 @@ void main() {
   float bs = SCALES[li];
   ivec2 off = ivec2(int((b >> 2) & 3u), int((b >> 4) & 3u));
   vec2 q = (vec2(off) + fract(g)) / bs;
+  float k = 1.0;
   // 縮小：マス（大きなマス）の中心を基準に、ノイズで決めた倍率 k で縮めた位置 g から引き直す。
   // 外側は、もとの位置に描いているタイルの平均色で塗る（描くタイル・倍率が変わる前の c, si, b で引く）
   if (uShrinkOn) {
     vec2 origin = vec2(c - off);
-    float k = cellScale(origin + 0.5 * bs);
+    k = cellScale(origin + 0.5 * bs);
     vec2 q2 = (q - 0.5) / max(k, 1e-4) + 0.5;
     ivec2 bo0 = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
     vec3 mc = uShrinkFill.a > 0.5 ? uShrinkFill.rgb : texelFetch(uMean, ivec3(bo0, li), 0).rgb;
     if (inv) mc = 1.0 - mc;
-    if (k <= 0.0 || any(lessThan(q2, vec2(0.0))) || any(greaterThanEqual(q2, vec2(1.0)))) { outColor = vec4(mc, 1.0); return; }
+    if (k <= 0.0 || any(lessThan(q2, vec2(0.0))) || any(greaterThanEqual(q2, vec2(1.0)))) { outColor = emit(mc, 0.0); return; }
     vec2 g2 = origin + q2 * bs;
     ivec2 c2 = clamp(ivec2(floor(g2)), ivec2(0), ivec2(uGrid) - 1);
     uint b2 = texelFetch(uBlk, c2, 0).r;
     ivec2 off2 = ivec2(int((b2 >> 2) & 3u), int((b2 >> 4) & 3u));
     // 画面の右端・下端で欠けた大きなマスで、縮めた先が別のマス（大きなマスの外）になったら、そこも平均色
-    if (c2 - off2 != c - off || int(b2 & 3u) != li) { outColor = vec4(mc, 1.0); return; }
+    if (c2 - off2 != c - off || int(b2 & 3u) != li) { outColor = emit(mc, 0.0); return; }
     g = g2; c = c2; b = b2; off = off2; q = q2;
     s = texelFetch(uSrc, c, 0).r;
     inv = s < 0;
@@ -181,7 +223,8 @@ void main() {
   }
   // 倍率が変わった直後（まだ進んでいない領域）は中がそろっていないので、グリッドの内側に収める
   ivec2 bo = clamp(si - off, ivec2(0), ivec2(uGrid) - 1);
-  vec3 col = tileColor(g, c, si, gx, gy, q, bo, li);
+  vec3 face = texelFetch(uMean, ivec3(bo, li), 0).rgb;
+  vec3 col = tileColor(g, c, si, gx, gy, q, bo, li, face);
   // 数字：描くタイルの数字を、大きなマスいっぱいの大きさで重ねる（文字の形の1層 = マス1つぶん）。
   // ミップマップの段は、マス内の位置の微分（= uScale / 倍率。縮小中はさらに / k）から決める
   if (uDigitsOn) {
@@ -191,7 +234,79 @@ void main() {
       col = mix(col, uDigitColor, a);
     }
   }
-  if (inv) col = 1.0 - col;
+  if (inv) { col = 1.0 - col; face = 1.0 - face; }
+  float h = uDepthOn ? heightOf(dot(face, vec3(0.299, 0.587, 0.114)), bs * k) * accent(bo, li) : 0.0;
+  outColor = emit(col, h);
+}`;
+
+// 擬似3D の2回目：1回目の色と高さ（uScene の A）から、影と AO を付ける。座標は描画先の px（高さも px）
+const DEPTH_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uScene;
+uniform float uHpx;     // 高さ DEPTH_MAX が何 px か
+uniform float uCellPx;  // 基本のマス1つが何 px か（縦横の相乗平均）
+uniform vec2 uLight;    // 光の来る向き（描画先の px、y は上向き）。高さは 45° 固定（1px 進むと 1px 上がる）
+uniform float uSoft;    // 影の柔らかさ（0 = 固い影）
+uniform float uShadow;  // 影の濃さ
+uniform float uAO;      // 接地の暗がりの濃さ
+out vec4 outColor;
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// 高さ（px）。余白（A = 0）と描画先の外は 0
+float heightAt(ivec2 p, ivec2 size) {
+  if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, size))) return 0.0;
+  float a = texelFetch(uScene, p, 0).a;
+  float v = (a * 255.0 - 1.0) / 254.0;
+  return a == 0.0 ? 0.0 : v * v * uHpx;
+}
+
+void main() {
+  ivec2 size = textureSize(uScene, 0);
+  ivec2 ip = ivec2(gl_FragCoord.xy);
+  vec4 sc = texelFetch(uScene, ip, 0);
+  if (sc.a == 0.0) { outColor = vec4(0.0); return; }
+  vec3 col = sc.rgb;
+  float h0 = heightAt(ip, size);
+  float jit = hash(gl_FragCoord.xy);
+
+  // 影：光の向きに進みながら、光線（45°で上がる）より高いところがあるかを見る。
+  // 柔らかい影は、光線とさえぎるものの高さの差 ÷ 進んだ距離 の最小値から（距離が遠いほどぼける）
+  float lit = 1.0;
+  float maxT = uHpx - h0;
+  if (maxT > 0.5) {
+    int n = int(min(160.0, ceil(maxT / max(1.0, uCellPx * 0.3))));
+    float dt = maxT / float(n);
+    float kk = mix(0.02, 1.2, uSoft);
+    for (int i = 0; i < n; i++) {
+      float t = (float(i) + jit) * dt + 0.5;
+      float hs = heightAt(ivec2(gl_FragCoord.xy + uLight * t), size);
+      float d = h0 + t - hs;
+      lit = min(lit, d / (kk * t));
+      if (lit <= 0.0) break;
+    }
+    lit = clamp(lit, 0.0, 1.0);
+    lit = lit * lit * (3.0 - 2.0 * lit);
+  }
+
+  // AO：まわりの高いところ（壁の根元）ほど暗く。8方向 × 3つの半径
+  float occ = 0.0, wsum = 0.0;
+  float R = min(uCellPx, uHpx) * 0.8;
+  for (int j = 0; j < 3; j++) {
+    float r = R * (0.15 + 0.35 * float(j) * float(j)) + 1.0;
+    float w = 1.0 / (1.0 + float(j));
+    for (int a = 0; a < 8; a++) {
+      float ang = (float(a) + jit) * 0.785398 + float(j) * 0.4;
+      float hs = heightAt(ivec2(gl_FragCoord.xy + vec2(cos(ang), sin(ang)) * r), size);
+      occ += clamp((hs - h0) / r, 0.0, 1.0) * w;
+      wsum += w;
+    }
+  }
+  float ao = 1.0 - uAO * clamp(occ / wsum * 1.6, 0.0, 1.0);
+
+  // 影の色：暗くするだけでなく、色を濃くする（安い CG っぽい灰色の影にしない）
+  vec3 shade = pow(col, vec3(1.6)) * 0.55;
+  col = mix(col, shade, uShadow * (1.0 - lit));
+  col *= ao;
   outColor = vec4(col, 1.0);
 }`;
 
@@ -214,7 +329,16 @@ export class Renderer {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog;
     this.u = {};
-    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uMean', 'uShrinkOn', 'uShrinkAmt', 'uNoiseK', 'uNoiseOff', 'uNoiseT', 'uNoiseBias', 'uNoiseContrast', 'uNoiseSteps', 'uShrinkFill', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uPhoto', 'uSrc', 'uFlat', 'uKind', 'uFlatOn', 'uBlk', 'uDigit', 'uGlyph', 'uDigitsOn', 'uDigitMask', 'uDigitColor', 'uMean', 'uShrinkOn', 'uShrinkAmt', 'uNoiseK', 'uNoiseOff', 'uNoiseT', 'uNoiseBias', 'uNoiseContrast', 'uNoiseSteps', 'uShrinkFill', 'uDepthOn', 'uDepthMode', 'uDepthW', 'uAccent', 'uCols', 'uGrid', 'uTexSize', 'uCanvasH', 'uOff', 'uScale', 'uImgMin', 'uImgMax']) this.u[n] = gl.getUniformLocation(prog, n);
+    const dprog = gl.createProgram();
+    gl.attachShader(dprog, sh(gl.VERTEX_SHADER, VS));
+    gl.attachShader(dprog, sh(gl.FRAGMENT_SHADER, DEPTH_FS));
+    gl.linkProgram(dprog);
+    if (!gl.getProgramParameter(dprog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(dprog));
+    this.dprog = dprog;
+    this.du = {};
+    for (const n of ['uScene', 'uHpx', 'uCellPx', 'uLight', 'uSoft', 'uShadow', 'uAO']) this.du[n] = gl.getUniformLocation(dprog, n);
+    this.depth = null; this.scene = null;
     this.vao = gl.createVertexArray();
     this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.blkTex = null; this.flatOn = false; this.grid = null;
     this.digitTex = null; this.glyphTex = null; this.digitsOn = false; this.digitColor = [1, 1, 1]; this.digitMask = 0;
@@ -305,6 +429,30 @@ export class Renderer {
    *   fill（残りを塗る色 [r, g, b]（0〜1）。null ならタイルの平均色） }
    */
   setShrink(p) { this.shrink = p && p.amount > 0 ? p : null; }
+
+  /**
+   * 擬似3D（試作）。null なら平らに描く。
+   * { height（基本のマスの幅の何倍まで。rise を掛ける）, mode（高さの式の番号）, weight（大きさの効き）,
+   *   accent（高さの緩急）, light（光の来る向き。度、0 = 上・時計回り）, soft, shadow, ao（0〜1） }
+   */
+  setDepth(p) { this.depth = p && p.height > 0 ? p : null; }
+
+  // 1回目の描画先（色と高さ）。大きさが変わったら作り直す
+  sceneTarget(w, h) {
+    const gl = this.gl;
+    if (this.scene && this.scene.w === w && this.scene.h === h) return this.scene;
+    if (this.scene) { gl.deleteFramebuffer(this.scene.fb); gl.deleteTexture(this.scene.tex); }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    this.scene = { w, h, tex, fb };
+    return this.scene;
+  }
 
   /** 写真テクスチャの中身だけを差し替える（カメラ入力。photo は setPhoto と同じ寸法のキャンバス） */
   updatePhoto(photo) {
@@ -407,6 +555,34 @@ export class Renderer {
 
   // 今バインドされている描画先（w×h px）に描く。sx, sy = 写真 1px を描画先の何 px にするか、dx, dy = 写真の左上の位置
   drawTo(w, h, sx, sy, dx, dy) {
+    const dp = this.depth;
+    if (!dp) { this.drawBase(w, h, sx, sy, dx, dy, false); return; }
+    const gl = this.gl, target = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    const sc = this.sceneTarget(w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sc.fb);
+    this.drawBase(w, h, sx, sy, dx, dy, true);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const { cw, ch } = this.grid, du = this.du;
+    const cellPx = Math.sqrt(sx * cw * sy * ch);
+    const a = (dp.light * Math.PI) / 180;
+    gl.useProgram(this.dprog);
+    gl.bindVertexArray(this.vao);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sc.tex);
+    gl.uniform1i(du.uScene, 0);
+    gl.uniform1f(du.uHpx, dp.height * 8 * cellPx); // 8 = シェーダの DEPTH_MAX
+    gl.uniform1f(du.uCellPx, cellPx);
+    gl.uniform2f(du.uLight, Math.sin(a), Math.cos(a));
+    gl.uniform1f(du.uSoft, dp.soft);
+    gl.uniform1f(du.uShadow, dp.shadow);
+    gl.uniform1f(du.uAO, dp.ao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // depth = A に高さを書く（擬似3D の1回目）
+  drawBase(w, h, sx, sy, dx, dy, depth) {
     const gl = this.gl;
     gl.viewport(0, 0, w, h);
     gl.clearColor(0, 0, 0, 0);
@@ -446,6 +622,12 @@ export class Renderer {
     gl.uniform2f(u.uImgMin, min[0], min[1]);
     gl.uniform2f(u.uImgMax, min[0] + W / cw, min[1] + H / ch);
     gl.uniform1i(u.uMean, 7);
+    gl.uniform1i(u.uDepthOn, depth ? 1 : 0);
+    if (depth) {
+      gl.uniform1i(u.uDepthMode, this.depth.mode);
+      gl.uniform1f(u.uDepthW, this.depth.weight);
+      gl.uniform1f(u.uAccent, this.depth.accent);
+    }
     const sk = this.shrink;
     gl.uniform1i(u.uShrinkOn, sk ? 1 : 0);
     if (sk) {
