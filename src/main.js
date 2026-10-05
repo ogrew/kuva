@@ -322,6 +322,16 @@ async function loadURL(url, name, done) {
 // サンプル画像（samples/ にあるもの）。一覧はビルド時に作られるので、画像を足すだけで候補に入る
 const SAMPLES = Object.entries(import.meta.glob('/samples/*.{png,jpg,jpeg,webp}', { eager: true, query: '?url', import: 'default' }))
   .map(([path, url]) => ({ name: path.split('/').pop(), url }));
+let sampleIdx = -1; // 今のサンプルの番号（I キーで次へ。ドロップした写真のあとも続きから）
+
+// サンプル画像を読み込む。パラメータはそのまま（ドロップと同じ）。カメラ入力中ならカメラを止める
+function loadSample(i) {
+  if (!SAMPLES.length) return;
+  sampleIdx = (i + SAMPLES.length) % SAMPLES.length;
+  if (camera.on) stopCamera(false);
+  const s = SAMPLES[sampleIdx];
+  loadURL(s.url, s.name, `Sample ${sampleIdx + 1}/${SAMPLES.length} (I: next)`);
+}
 
 // ---------- 再生ループ ----------
 // 映像の中身は世代番号だけで決まる。壁時計は「いつ step するか」にしか使わない
@@ -765,7 +775,7 @@ pane.addBlade({ view: 'separator' });
 {
   const keys = document.createElement('dl');
   keys.className = 'keys';
-  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG'], ['C', 'CAMERA'], ['D', 'BORDERS']]) {
+  for (const [k, v] of [['Space', 'PLAY / PAUSE'], ['N', 'NEW SEED'], ['R', 'RESET'], ['F', 'FULLSCREEN'], ['H', 'HIDE GUI'], ['S', 'SAVE PNG'], ['I', 'NEXT SAMPLE'], ['C', 'CAMERA'], ['D', 'BORDERS']]) {
     keys.insertAdjacentHTML('beforeend', `<dt>${k}</dt><dd>${v}</dd>`);
   }
   // パネルの中身の入れ物に入れる（タイトルを押して畳んだときに一緒に隠れるように）
@@ -840,6 +850,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'n') newSeed();
   else if (k === 'r') rebuild();
   else if (k === 's') savePNG();
+  else if (k === 'i') loadSample(sampleIdx + 1);
   else if (k === 'c') { CONFIG.camera = !CONFIG.camera; guiSync(); setCamera(CONFIG.camera); }
   else if (k === 'd') { CONFIG.regionBorders = !CONFIG.regionBorders; guiSync(); } // 描くのは毎フレームの再生ループ
 });
@@ -858,9 +869,6 @@ window.addEventListener('drop', (e) => {
 // 最初の写真：?img=URL があればそれ（開発用）、なければサンプル画像からランダムに1枚
 const q = new URLSearchParams(location.search).get('img');
 if (q) loadURL(q, q.split('/').pop());
-else if (SAMPLES.length) {
-  const s = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
-  loadURL(s.url, s.name, 'Sample (drop to replace)');
-}
+else loadSample(Math.floor(Math.random() * SAMPLES.length));
 
 requestAnimationFrame(frame);
