@@ -64,6 +64,16 @@ const CONFIG = {
   shrinkSteps: 8,      // 倍率の段数（0 = なめらか）
   shrinkFill: 'mean',  // 残りの塗り方 'mean'（タイルの平均色） | 'solid'（全マス共通の shrinkColor）（試作）
   shrinkColor: '#000000', // 'solid' のときの色
+  // ---- 擬似3D（一時停止中だけ、マスを高さのある箱にして影を付ける。描画だけに効く。試作）----
+  depth: 0,              // 高さ（基本のマスの幅の何倍まで。0 = OFF）
+  depthMode: 1,          // 高さの式（DEPTH_MODES の番号）
+  depthSize: 0,          // 大きさの効き（0 = 色だけ。+ なら小さいマスほど高く、− なら大きいマスほど高く）
+  depthLight: 315,       // 光の来る向き（度。0 = 上、時計回り。315 = 左上）
+  depthAccent: 0.05,      // 高さの緩急（タイルごとの揺らぎ・突き抜けて高いマス・極端に低いマス。0 = なし）
+  depthSoft: 0.85,       // 影の柔らかさ（0 = 固い影）
+  depthShadow: 0.45,     // 影の濃さ
+  depthAO: 0.65,         // 接地の暗がりの濃さ
+  depthLive: false,      // 再生中も立体にする（重さを見る用）
   regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
   // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
@@ -124,6 +134,7 @@ let playing = true;
 let acc = 0;          // 次の世代までの端数（世代単位）
 let status = 'Drop an image';
 let uiVisible = true;
+let depthRise = 0;    // 擬似3D の立ち上がり（0〜1。止めてから伸びる）
 
 // ---------- 作り直し ----------
 function rebuild() {
@@ -187,7 +198,7 @@ function updateLayout() {
 
 // 縮小したマスの残りを塗る色（倍率ごとのタイルの平均色）。使っている倍率の分だけ。カメラ入力中は新しいフレームごとに作り直す
 function updateMeans() {
-  if (!sim || !(CONFIG.shrink > 0)) return;
+  if (!sim || !(CONFIG.shrink > 0 || CONFIG.depth > 0)) return;
   for (const li of scalesInUse()) {
     if (layers.means[li]) continue;
     layers.means[li] = true;
@@ -203,6 +214,19 @@ function updateShrink() {
     amount: CONFIG.shrink, scale: CONFIG.shrinkScale, time: (sim.gen + acc) * CONFIG.shrinkSpeed / 100,
     bias: CONFIG.shrinkBias, contrast: CONFIG.shrinkContrast, steps: CONFIG.shrinkSteps, seed: sim.P.seed >>> 0,
     fill: CONFIG.shrinkFill === 'solid' ? rgb(CONFIG.shrinkColor) : null,
+  });
+}
+
+// 擬似3D のパラメータを描画に渡す（毎フレーム）。一時停止中だけ（Live なら再生中も）。止めてから DEPTH_RISE 秒で高さが伸びる
+const DEPTH_RISE = 0.6;
+function updateDepth(dt) {
+  const on = sim && CONFIG.depth > 0 && (!playing || CONFIG.depthLive);
+  depthRise = on ? Math.min(1, depthRise + dt / DEPTH_RISE) : 0;
+  if (!on) { renderer.setDepth(null); return; }
+  const e = 1 - (1 - depthRise) ** 3;
+  renderer.setDepth({
+    height: CONFIG.depth * e, mode: CONFIG.depthMode, weight: CONFIG.depthSize, accent: CONFIG.depthAccent,
+    light: CONFIG.depthLight, soft: CONFIG.depthSoft, shadow: CONFIG.depthShadow, ao: CONFIG.depthAO,
   });
 }
 
@@ -387,6 +411,7 @@ function frame(t) {
   }
 
   updateShrink();
+  updateDepth(dt);
   renderer.draw(CONFIG.fit);
   borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit);
   updateInfo();
@@ -680,6 +705,32 @@ const refreshShrink = () => {
 cShrink.on('change', () => { refreshShrink(); updateMeans(); });
 cShrinkSub[5].on('change', refreshShrink);
 refreshShrink();
+
+// Depth（試作：一時停止中だけ、マスを箱にして真上から見た影を付ける。描画だけに効く）
+const fd = pane.addFolder({ title: 'Depth' });
+const cDepth = num(fd, 'depth', 'Height', 0, 10, 0.05);
+const cDepthSub = [
+  list(fd, 'depthMode', '　└ Formula', { 'Sum': 0, 'Product': 1, 'Terrace': 2, 'Peak': 3 }),
+  num(fd, 'depthSize', '　└ Size', -1, 1, 0.01),
+  num(fd, 'depthAccent', '　└ Accent', 0, 0.25, 0.005),
+  num(fd, 'depthLight', '　└ Light', 0, 360, 1),
+  num(fd, 'depthSoft', '　└ Softness', 0, 1, 0.01),
+  num(fd, 'depthShadow', '　└ Shadow', 0, 1, 0.01),
+  num(fd, 'depthAO', '　└ AO', 0, 1, 0.01),
+  fd.addBinding(CONFIG, 'depthLive', { label: '　└ While playing' }),
+];
+tip(cDepth, 'While paused, raises each cell into a block seen from straight above and casts shadows. Brighter cells stand taller (cell size via Size). Height of a bright cell, in cell widths (towers from Accent go higher). 0 = off');
+tip(cDepthSub[0], 'How brightness L and cell size S set the height\nSum: L and smallness added (Size = share of size)\nProduct: L × S^−Size\nTerrace: L in 5 steps × S^−Size\nPeak: L^2.5 × S^−Size (only bright cells stand out)');
+tip(cDepthSub[1], 'How cell size affects the height. + = smaller cells (shrunk, or not big cells) stand taller, − = bigger cells stand taller. 0 = brightness only');
+tip(cDepthSub[2], 'Height contrast per photo tile (moves with the tile): random spread, plus a few towers far above the rest and a few pits far below. 0 = off');
+tip(cDepthSub[3], 'Direction the light comes from, in degrees (0 = top, clockwise; 315 = top left). The light is fixed at 45° high');
+tip(cDepthSub[4], 'Shadow edge softness. 0 = hard');
+tip(cDepthSub[5], 'Shadow darkness');
+tip(cDepthSub[6], 'Darkening at the foot of taller neighbours (ambient occlusion)');
+tip(cDepthSub[7], 'Keep the blocks while playing too (heavier; for testing)');
+const refreshDepth = () => cDepthSub.forEach((c) => { c.hidden = !(CONFIG.depth > 0); });
+cDepth.on('change', () => { refreshDepth(); updateMeans(); });
+refreshDepth();
 
 // Evolve（時間とともに映像を変える仕組み）
 const fx = pane.addFolder({ title: 'Evolve' });
