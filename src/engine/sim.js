@@ -69,6 +69,8 @@ export const ENGINE_DEFAULTS = {
   minRegionFrac: 0.04,
   splitMin: 0.25, splitMax: 0.75,
   skipProb: 0.1,       // 領域を CA 処理しない確率（元写真がそのまま残る）
+  sizeBias: 0,         // 大きさの傾き。面積 / 基準（初期の領域の面積の中央値）の sizeBias 乗で、大きい領域ほど still に、小さい領域ほど分裂しやすくする（0 = 大きさによらない）
+  skipMax: 0.5,        // sizeBias で大きい領域の still の確率が上がるときの上限
   topology: false,    // 局所的な分裂・合体
   topologyInterval: 80, // 領域ごとの間隔の中心値（世代）。実際は0.5〜1.5倍
   leakEnabled: false, // 隣からの漏れ
@@ -101,6 +103,9 @@ export class Simulation {
     // quadtree でも bsp の分割を1回走らせる（共有の乱数の消費を同じにする）
     let rects = subdivide(P, cols, rows, rng, this.cw, this.ch);
     if (P.regionLayout === 'quadtree') rects = subdivideQuadtree(P, cols, rows, this.mean, P.quadRegions, this.cw, this.ch);
+    // 大きさの基準：初期の領域の面積（マス）の中央値。分裂・合体でできた領域もこれと比べる
+    const areas = rects.map(([, , w, h]) => w * h).sort((a, b) => a - b);
+    this.refArea = areas[areas.length >> 1];
     this.regions = rects
       .map(([x, y, w, h], r) => this.createRegion(x, y, w, h, r));
     this.nextRegionId = this.initialRegions = this.regions.length;
@@ -135,7 +140,9 @@ export class Simulation {
     g.diagU = hash(P.seed, r, 0x64696175) / 4294967296; // All のとき斜めに流れるか（diagFrac と比べる）
     g.started = false;
     g.patT = 0;
-    g.motion = g.rng() < P.skipProb ? 'still' : P.motion;
+    // 大きい領域ほど still になりやすい（sizeBias = 0 なら従来どおり skipProb）。乱数の消費は1つのまま
+    const skip = P.sizeBias ? Math.min(P.skipMax, P.skipProb * this.sizeRatio(g) ** P.sizeBias) : P.skipProb;
+    g.motion = g.rng() < skip ? 'still' : P.motion;
     MOTIONS[g.motion].init(g, this);
     // E のテンポ用の乱数は別系列（E を切り替えても、他の乱数の流れは変わらない）
     g.trng = mulberry32(hash(P.seed, r, 0x74656D70));
@@ -145,6 +152,11 @@ export class Simulation {
     // 分裂・合体の待ち時間（領域ごと。乱数は hash(seed, 領域, 回数) の別系列）
     initTopology(this, g);
     return g;
+  }
+
+  // 領域の面積 / 基準の面積
+  sizeRatio(g) {
+    return g.w * g.h / this.refArea;
   }
 
   // 領域の倍率を決め直す。変わったら写真の流し込みは打ち切り、模様は種から置き直す（次の世代から反映）

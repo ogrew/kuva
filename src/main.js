@@ -99,6 +99,8 @@ const FLAVORS = {
 //   最大：短辺の 6.25%（短辺が16マス。これより粗いと領域に分けたときに CA らしさが出にくい）。
 //   Quadtree は 2%（短辺が50マス）。マスが少ないと割る余地がなく、均一な格子に近くなる
 const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = { bsp: 0.0625, quadtree: 0.02 }, CELL_MIN_PX = 4;
+// 大きい領域ほど still に、小さい領域ほど分裂しやすくする（エンジンの sizeBias。GUI には出さない）
+const SIZE_BIAS = 1;
 const cellMaxFrac = () => CELL_MAX_FRAC[CONFIG.regionLayout] ?? CELL_MAX_FRAC.bsp;
 const cellRange = () => {
   if (!bitmap) return { min: 12, max: 64 };
@@ -160,7 +162,7 @@ function rebuild() {
   const padded = paddedCanvas(bitmap, g);
   const Ax = Math.max(1, Math.min(ANALYSIS_SUB, cw)), Ay = Math.max(1, Math.min(ANALYSIS_SUB, ch));
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * Ax, g.rows * Ay)), stride: g.cols * Ax };
-  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, regionLayout: CONFIG.regionLayout, quadRegions: CONFIG.quadRegions, ...FLAVORS[CONFIG.flavor] };
+  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, regionLayout: CONFIG.regionLayout, quadRegions: CONFIG.quadRegions, sizeBias: SIZE_BIAS, ...FLAVORS[CONFIG.flavor] };
   for (const k of Simulation.LIVE) P[k] = CONFIG[k];
   const io = { cols: g.cols, rows: g.rows, Ax, Ay, analysis, cw, ch };
   sim = new Simulation(P, io);
