@@ -54,7 +54,11 @@ export function evolveRegions(sim) {
       if (rect) merges.push({ b, rect });
     }
     if (!canSplit && !merges.length) continue;
-    const split = canSplit && (!merges.length || rng() < 0.5);
+    // 分裂か合体か。基準より小さい領域ほど分裂しやすい。基準以上は従来どおり半々
+    // （大きいほど合体しやすくすると、合体した領域がさらに合体して、領域がどんどん大きくなるため）。
+    // sizeBias = 0 なら従来どおり 0.5。乱数の消費は変わらない
+    const pSplit = P.sizeBias ? 1 - 0.5 * Math.min(1, sim.sizeRatio(a)) ** P.sizeBias : 0.5;
+    const split = canSplit && (!merges.length || rng() < pSplit);
     let removed, rects, from;
     if (split) {
       const vertical = a.w >= 2 * minX && (a.h < 2 * minY || rng() < (a.w * sim.cw > a.h * sim.ch ? 0.7 : 0.3));

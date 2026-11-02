@@ -187,3 +187,21 @@ test('Staggerと分裂・合体：開始待ちの領域を保ち、開始済み�
   }
   assert.ok(s.topologyEvents.split > 0 && s.topologyEvents.merge > 0);
 });
+
+test('大きさの傾き：大きい領域ほど still になりやすく、決定的で、すき間なく覆う', () => {
+  let big = [0, 0], small = [0, 0];
+  for (let seed = 1; seed <= 40; seed++) {
+    const s = new Simulation({ ...base, seed, skipProb: 0.1, sizeBias: 1 }, fakeIO(120, 80, seed));
+    for (const g of s.regions) {
+      const c = s.sizeRatio(g) >= 1 ? big : small;
+      c[0]++; c[1] += g.motion === 'still';
+    }
+  }
+  assert.ok(big[1] / big[0] > 2 * small[1] / small[0], '大きい領域のほうが still の割合が高い');
+  const P = { ...base, skipProb: 0.1, sizeBias: 1, topologyInterval: 20 };
+  const a = new Simulation(P, fakeIO(120, 80)), b = new Simulation(P, fakeIO(120, 80));
+  for (let i = 0; i < 300; i++) { a.step(); b.step(); }
+  checkCoverage(a);
+  assert.deepEqual(rects(a), rects(b));
+  assert.deepEqual(a.src, b.src);
+});
