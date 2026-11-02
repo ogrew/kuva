@@ -4,14 +4,20 @@ import { Renderer } from '../src/render/renderer.js';
 import { gridLayout, paddedCanvas, scaledCanvas, pixelsOf } from '../src/image.js';
 import sample from '../samples/sample01.png?url';
 
+// M で切り替える初期の分け方
+const layouts = [
+  { name: 'BSP', regionLayout: 'bsp' },
+  { name: 'Quadtree', regionLayout: 'quadtree' },
+];
 export const studies = [
   { title: '従来', topology: false, leak: 0 },
   { title: '分裂・合体', topology: true, leak: 0 },
   { title: '隣からの漏れ', topology: false, leak: 0.6 },
   { title: '分裂・合体 ＋ 漏れ', topology: true, leak: 0.6 },
 ];
-let bitmap, layout, io, photo, running = true, outlines = false, regionMode = 'random', acc = 0, last = 0, loadSeq = 0;
+let bitmap, layout, io, photo, running = true, outlines = false, layoutIndex = 0, acc = 0, last = 0, loadSeq = 0;
 const status = document.querySelector('#status');
+window.studies = studies; // コンソールから調べる用
 for (const item of studies) {
   const article = document.createElement('article');
   article.innerHTML = `<h2>${item.title}<span class="count"></span></h2><div class="frame"><canvas class="image"></canvas><canvas class="outline"></canvas></div>`;
@@ -25,7 +31,7 @@ for (const item of studies) {
 export function reset() {
   if (!io) return;
   for (const item of studies) {
-    item.sim = new Simulation({ seed: 42, K: 7, chaos: 0.15, motion: 'flow', regionMode, ruleMorph: true, regionRules: false,
+    item.sim = new Simulation({ seed: 42, K: 7, chaos: 0.15, motion: 'flow', regionLayout: layouts[layoutIndex].regionLayout, ruleMorph: true, regionRules: false,
       topology: item.topology, leakEnabled: item.leak > 0, leak: item.leak, inject: false, tempo: false, patFrac: 0 }, io);
     item.renderer.setPhoto(layout, photo);
   }
@@ -54,14 +60,14 @@ function draw() {
       for (const g of item.sim.regions) ctx.strokeRect(dx + g.x * layout.cw * scale, dy + g.y * layout.ch * scale, g.w * layout.cw * scale, g.h * layout.ch * scale);
     }
   }
-  status.textContent = `${running ? '再生中' : '停止'} / ${studies[0].sim?.gen ?? 0}世代 / seed 42 / 初期の分け方 ${regionMode === 'adaptive' ? 'Adaptive' : 'Random'} / 境界線${outlines ? 'ON' : 'OFF'}`;
+  status.textContent = `${running ? '再生中' : '停止'} / ${studies[0].sim?.gen ?? 0}世代 / seed 42 / 初期の分け方 ${layouts[layoutIndex].name} / 境界線${outlines ? 'ON' : 'OFF'}`;
 }
 async function load(blob) {
   const seq = ++loadSeq;
   const next = await createImageBitmap(blob);
   if (seq !== loadSeq) { next.close(); return; }
   bitmap?.close(); bitmap = next;
-  const cell = Math.max(4, Math.round(Math.min(bitmap.width, bitmap.height) / 72));
+  const cell = Math.max(4, Math.round(Math.min(bitmap.width, bitmap.height) / (Number(new URLSearchParams(location.search).get('cells')) || 72))); // ?cells= で短辺のマス数
   layout = gridLayout(bitmap.width, bitmap.height, cell, cell);
   const padded = paddedCanvas(bitmap, layout), sub = 4;
   io = { cols: layout.cols, rows: layout.rows, cw: cell, ch: cell, Ax: sub, Ay: sub,
@@ -77,7 +83,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space') { e.preventDefault(); running = !running; acc = 0; draw(); }
   if (e.key.toLowerCase() === 'r') reset();
   if (e.key.toLowerCase() === 'b') { outlines = !outlines; draw(); }
-  if (e.key.toLowerCase() === 'm') { regionMode = regionMode === 'adaptive' ? 'random' : 'adaptive'; reset(); }
+  if (e.key.toLowerCase() === 'm') { layoutIndex = (layoutIndex + 1) % layouts.length; reset(); }
 });
 window.addEventListener('resize', draw);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { running = false; acc = 0; draw(); } });

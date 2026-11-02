@@ -49,18 +49,9 @@ export function subdivide(P, cols, rows, rng, cw = 1, ch = 1) {
   return out;
 }
 
-/**
- * 色のばらつきで分ける（regionMode = 'adaptive'）。乱数は使わず、写真だけで決まる。
- * 平均色からの差の2乗の合計（SSE）を、割ったときに最も減らせる領域から順に割り、count 個になったら止める。
- * 切る位置は、縦横すべての候補（alignCut でそろえたもの）から、割ったあとの SSE の合計が最小になるもの。
- * 最小領域は subdivide と同じ。mean = セルごとの平均色（RGB を3つずつ）
- * 戻り値は subdivide と同じ形。並びは分割の木の順（割った領域の位置に2つの子を入れる）
- */
-export function subdivideAdaptive(P, cols, rows, mean, count, cw = 1, ch = 1) {
-  const physLong = Math.max(cols * cw, rows * ch);
-  const minX = Math.max(2, Math.round(P.minRegionFrac * physLong / cw));
-  const minY = Math.max(2, Math.round(P.minRegionFrac * physLong / ch));
-  // 累積和（R・G・B・2乗の和）。S[(y * (cols + 1) + x) * 4] = (0,0)〜(x,y) の手前までの和
+// 長方形の SSE（平均色からの差の2乗の合計）を一瞬で求める関数を作る。累積和（R・G・B・2乗の和）を使う
+function sseTable(cols, rows, mean) {
+  // S[(y * (cols + 1) + x) * 4] = (0,0)〜(x,y) の手前までの和
   const W = cols + 1, S = new Float64Array(W * (rows + 1) * 4);
   for (let y = 0; y < rows; y++) {
     const r = [0, 0, 0, 0];
@@ -71,37 +62,78 @@ export function subdivideAdaptive(P, cols, rows, mean, count, cw = 1, ch = 1) {
       for (let c = 0; c < 4; c++) S[o + c] = S[u + c] + r[c];
     }
   }
-  const sse = (x, y, w, h) => {
+  return (x, y, w, h) => {
     const a = (y * W + x) * 4, b = (y * W + x + w) * 4, c = ((y + h) * W + x) * 4, d = ((y + h) * W + x + w) * 4;
     const v = c4 => S[d + c4] - S[b + c4] - S[c + c4] + S[a + c4];
     const R = v(0), G = v(1), B = v(2);
     return v(3) - (R * R + G * G + B * B) / (w * h);
   };
-  // 領域の最良の切り方（gain = 減らせる SSE。割れなければ -1）
-  const best = (x, y, w, h) => {
-    const g = { rect: [x, y, w, h], gain: -1, kids: null }, whole = sse(x, y, w, h);
-    const tryAxis = (vert) => {
-      const len = vert ? w : h, min = vert ? minX : minY, pos = vert ? x : y;
-      if (len < min * 2) return;
-      const seen = new Set();
-      for (let c = min; c <= len - min; c++) {
-        const a = alignCut(pos, len, c, min);
-        if (seen.has(a) || a < 1 || a > len - 1) continue;
-        seen.add(a);
-        const kids = vert ? [[x, y, a, h], [x + a, y, w - a, h]] : [[x, y, w, a], [x, y + a, w, h - a]];
-        const gain = whole - sse(...kids[0]) - sse(...kids[1]);
-        if (gain > g.gain) { g.gain = gain; g.kids = kids; }
-      }
-    };
-    tryAxis(true); tryAxis(false);
-    return g;
+}
+
+/**
+ * Quadtree（regionLayout = 'quadtree'）。画面で見て正方形の領域を、縦横それぞれ半分にして4つに割っていく。
+ * - 最小の葉（単位）は、長いほうのマスの辺 × base px の正方形。マスの数では ux × uy マス（高さ比が整数でなければ、
+ *   1割まで正方形からずれるのを許す）。base は quadLeaf（2）。短い辺に単位が quadMinLeaves 個並ばないほど
+ *   大きなマスなら 1 に下げる
+ * - 根：単位で数えて 2 のべき乗 R の正方形を敷き詰める。R は、縦横どちらも余りが R/2 以下になる最大のもの。
+ *   余り（と単位に足りない端）は右端・下端の根に含める（端の根だけ最大 1.5:1 の長方形になる）。
+ *   余りの帯を小さな正方形で埋めると、写真に関係なく端に細かい正方形が並んでしまった
+ * - 割る位置は真ん中。8マスの倍数（だめなら 4・2）にそろえられて、ずれが1割以内ならそろえる。
+ *   2 のべき乗の正方形はちょうど半分なので、8マス以上の葉は位置も辺も8マスの倍数にそろい、大きなマスが欠けない
+ * - 色のばらつきで割る：平均の誤差（RMS）が最も大きい葉から順に4つに割る。乱数は使わない
+ * - count 個以上になるか、割れる葉がなくなったら止める。戻り値は subdivide と同じ形（並びは木の順）
+ */
+export function subdivideQuadtree(P, cols, rows, mean, count, cw = 1, ch = 1) {
+  const big = Math.max(cw, ch), short = Math.min(cols * cw, rows * ch);
+  let base = P.quadLeaf;
+  while (base > 1 && short / (base * big) < P.quadMinLeaves) base /= 2;
+  const unit = (c) => {
+    const raw = base * big / c;
+    for (const a of [base, 4, 2, 1]) {
+      const v = Math.max(a, Math.round(raw / a) * a);
+      if (Math.abs(v - raw) <= raw * 0.1 || a === 1) return v;
+    }
   };
-  const leaves = [best(0, 0, cols, rows)];
+  const ux = unit(cw), uy = unit(ch), nx = Math.floor(cols / ux), ny = Math.floor(rows / uy);
+  if (nx < 1 || ny < 1) return [[0, 0, cols, rows]];
+  let R = 1;
+  while (R * 2 <= Math.min(nx, ny)) R *= 2;
+  while (R > 1 && (nx % R > R / 2 || ny % R > R / 2)) R /= 2;
+  // 長さ len を真ん中で割る位置（単位 u の倍数。8・4・2 の倍数にそろえられればそろえる）
+  const half = (pos, len, u) => {
+    const c = Math.max(u, Math.min(len - u, Math.round(len / 2 / u) * u));
+    for (const a of [REGION_ALIGN, 4, 2]) {
+      const v = Math.round((pos + c) / a) * a - pos;
+      if (v >= u && v <= len - u && Math.abs(v - len / 2) <= len * 0.1) return v;
+    }
+    return c;
+  };
+  const sse = sseTable(cols, rows, mean);
+  const node = (x, y, w, h) => {
+    const n = { rect: [x, y, w, h], kids: null, gain: -1 };
+    if (w >= 2 * ux && h >= 2 * uy) {
+      const a = half(x, w, ux), b = half(y, h, uy);
+      n.kids = [[x, y, a, b], [x + a, y, w - a, b], [x, y + b, a, h - b], [x + a, y + b, w - a, h - b]];
+      // 優先度 = 平均の誤差（RMS）。面積は見ない（面積を効かせると大きな領域から割れて、大きさがそろった格子に近くなった）
+      n.gain = Math.sqrt(Math.max(0, sse(x, y, w, h)) / (w * h));
+    }
+    return n;
+  };
+  // 根の区切り（マス）。最後の根は端まで伸ばす
+  const edges = (n, u, len) => {
+    const k = Math.floor(n / R), out = [];
+    for (let i = 0; i <= k; i++) out.push(i === k ? len : i * R * u);
+    return out;
+  };
+  const xs = edges(nx, ux, cols), ys = edges(ny, uy, rows);
+  const leaves = [];
+  for (let j = 0; j + 1 < ys.length; j++) for (let i = 0; i + 1 < xs.length; i++)
+    leaves.push(node(xs[i], ys[j], xs[i + 1] - xs[i], ys[j + 1] - ys[j]));
   while (leaves.length < count) {
     let k = -1;
-    for (let i = 0; i < leaves.length; i++) if (leaves[i].kids && (k < 0 || leaves[i].gain > leaves[k].gain)) k = i;
+    for (let q = 0; q < leaves.length; q++) if (leaves[q].kids && (k < 0 || leaves[q].gain > leaves[k].gain)) k = q;
     if (k < 0) break;
-    leaves.splice(k, 1, ...leaves[k].kids.map(r => best(...r)));
+    leaves.splice(k, 1, ...leaves[k].kids.map(r => node(...r)));
   }
-  return leaves.map(g => g.rect);
+  return leaves.map(n => n.rect);
 }

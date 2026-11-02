@@ -34,7 +34,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `src/engine/sim.js` | `Simulation`：状態・`step()`・`set()`（再生中の変更）・E のテンポ。`ENGINE_DEFAULTS`（GUI に出さない内部値）、`ENGINE_VERSION` |
 | `src/engine/motions.js` | 領域の動き方 `MOTIONS`（`flow` / `ca` / `still`）。行の束としての1世代、ルールの切替・変形（A）、写真の流し込み（C） |
 | `src/engine/rules.js` | ルール表。性格 `GENRES`（B）、chaos の即時反映 |
-| `src/engine/analyze.js` / `regions.js` | 解析（平均色・k-means・分類・代表タイル）と領域分割。kivi からほぼそのまま。分割は kivi と同じく実際の長さ（px）で最小領域と向きを決める（マスの高さ比に対応）。切る位置はグリッドの原点から8マスの倍数にそろえる（`alignCut`。大きなマスのため） |
+| `src/engine/analyze.js` / `regions.js` | 解析（平均色・k-means・分類・代表タイル）と領域分割（BSP・Quadtree）。kivi からほぼそのまま。分割は kivi と同じく実際の長さ（px）で最小領域と向きを決める（マスの高さ比に対応）。切る位置はグリッドの原点から8マスの倍数にそろえる（`alignCut`。大きなマスのため） |
 | `src/engine/scale.js` | 大きなマス（Big cells）。倍率ごとの分類・代表タイル（`analyzeScale`）、領域の倍率（`regionScale`）、中のマスへの書き写し（`fillBlocks`） |
 | `src/engine/topology.js` | 領域の分裂・合体（F）。1組の領域だけを組み替える（`evolveRegions`） |
 | `src/engine/flat.js` | 塗りつぶすタイルの選び方（描画だけに効く）。結果はタイルごとの RGBA（1色＋2色塗りの半分ずつの8色で9層。大きなマスは倍率ごと）と、描く位置ごとの割り方で、描画に渡す |
@@ -46,7 +46,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `public/favicon.svg` | favicon。16×16 マスのドットの k の数行だけを横にずらしたもの（崩れた k） |
 | `samples/` | サンプル画像。開いたときにランダムに1枚を読み込み、I キーで次のサンプルへ（パラメータはそのまま。`loadSample`）。一覧は `import.meta.glob` でビルド時に作るので、置くだけで候補に入る。公開される（AI 生成の画像。埋め込みの XMP は生成元のラベルと ID だけ） |
 | `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
-| `experiments/regions.html` | 開発サーバ専用の比較ページ。同じ写真・seed・世代で「従来／分裂・合体／漏れ／両方」の4画面を並べる（Space・R・B、M で初期の分け方を Random／Adaptive に切り替え、写真のドロップ）。公開ビルドには入れていない |
+| `experiments/regions.html` | 開発サーバ専用の比較ページ。同じ写真・seed・世代で「従来／分裂・合体／漏れ／両方」の4画面を並べる（Space・R・B、M で初期の分け方を BSP・Quadtree で切り替え、`?cells=` で短辺のマス数（既定 72。Quadtree は 200 くらいで見る）、写真のドロップ）。公開ビルドには入れていない |
 
 ## エンジンのパイプライン
 
@@ -56,7 +56,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 2. k-means（k-means++ 初期化）で K 色 → **輝度順に並べ替え**（状態 0 = 暗い）
 3. 各セルを状態に分類し、状態ごとに代表タイルをリザーバサンプリング
 4. 共有のルールプールを作る。インデックスは `((L*K + C)*K + R)*K + I`
-5. 領域を再帰2分割し（`regionMode`：`random` か `adaptive`。下の「初期の分け方」）、領域ごとに動き方を初期化（向き・境界の固定値・ルール）
+5. 領域に分け（`regionLayout`：`bsp` か `quadtree`。下の「初期の分け方」）、領域ごとに動き方を初期化（向き・境界の固定値・ルール）
 
 1世代（`step()`）：領域ごとに `MOTIONS[motion].step(g, sim, prev, next)`。前の世代 `cur` と次の世代 `nxt`（それぞれ `state` と `src`）を入れ替えて `gen++`。
 
@@ -98,7 +98,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 - 短いラベルで伝わりにくいものは `binding.element.title` にマウスを乗せたときの説明を書く
 - 選択肢が排他的なものはプルダウン
 - GUI のラベル・ツールチップ・状態パネルのメッセージは英語（短い名詞だけにして、単位や範囲はツールチップに書く）。コードのコメントは日本語
-- フォルダは Input（Camera・Mirror・Device）／Grid（Regions・Seed・Cell size・Aspect・Colors・Big cells）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
+- フォルダは Input（Camera・Mirror・Device）／Regions（Layout・Detail）／Grid（Seed・Cell size・Aspect・Colors・Big cells）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
 - パネルの先頭はタイトルバーを大きくしたヘッダー（`kuva` と `PHOTO × 1D CELLULAR AUTOMATA`、`.head`）。押すと畳めるのはそのまま。写真名・grid・seed は Status パネルにあるので、ヘッダーには出さない
 - 見た目は同じ作者の p5-hiragana-mosaic に合わせている（パネルまわりだけ）。白の半透明のパネル（`.panel` の中に Tweakpane。`--tp-*` の色は hiragana と同じ）、Space Grotesk ＋ M PLUS 1p（Google Fonts。オフラインでは別のフォントになってよい）、左下に Follow／GitHub のリンク（H で一緒に隠れる）
 - 背景は入力写真のぼかし（`#bg`）。写真を読み込んだときに1回だけ、縮小してぼかした画像を作る（`updateBackdrop`。毎フレームは描かない。`backdrop-filter` は下の映像が毎フレーム変わるので使わない）。描画は元写真の外側を透明にしているので、Fit = contain の余白にだけ見える
@@ -145,13 +145,20 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
 
 ## 初期の分け方（Regions、試作）
 
-- GUI の Grid フォルダの先頭の Regions（`regionMode`、作り直し）。Random（`random`。従来。seed で向きと位置を決める再帰2分割）と Adaptive（`adaptive`、`subdivideAdaptive`）。Color という名前は Colors（K）と紛らわしいので Adaptive にした。エンジンの既定値・GUI の初期値は `random`（ゴールデンは変わらない）。Quadtree の事例で「色のばらつきで分ける」見た目が良かったので、まず BSP のまま試した。やめるときに戻しやすいよう選択式にした（ユーザーの希望）
-- `adaptive`：セルの平均色の SSE（平均色からの差の2乗の合計）を累積和で求め、割ったときに SSE が最も減る領域から順に割る。切る位置は縦横すべての候補（`alignCut` でそろえたもの）から、割ったあとの SSE の合計が最小のもの。最小領域は random と同じ。乱数は使わない
-- 領域数は seed によらないように、固定の seed 8個で random に分けたときの平均にする（しきい値で止めると写真のコントラストで数が大きく変わるため）。seed の分割から数を取ると、seed で分割の深さが変わって形も変わってしまった
-- 共有の `rng` の消費をそろえるため、adaptive でも random の分割を1回走らせる
-- seed は領域の形を変えないが、領域の番号のハッシュで決まるもの（大きなマス・Stagger・2色塗り・斜め）とルールは変わる
-- 分裂・合体（F）は従来のランダムなまま。時間がたつと色で分けた構図は崩れていく
-- Quadtree（4分割）への切り替えは、これを見てから検討する。エンジン・描画は「長方形がすき間なく画面を覆う」ことしか前提にしていないので、初期の分割の差し替えは小さい。分裂・合体を Quadtree 流（兄弟4つの合体）にするには親子関係が要る
+- GUI の Regions フォルダ（Input と Grid の間）の Layout（`regionLayout`、作り直し）。BSP（`bsp`。従来。seed で向きと位置を決める再帰2分割）と Quadtree（`quadtree`、`subdivideQuadtree`。色のばらつきで正方形を4分割）。エンジンの既定値・GUI の初期値は `bsp`（ゴールデンは変わらない）
+- 経緯：Quadtree の事例で「色のばらつきで正方形に分ける」見た目が良かった。まず BSP のまま色で分ける Adaptive を試し（`ogrew/kuva#33`）、そのあと Quadtree を足した。いったん Layout（BSP / Quadtree）× Mode（Random / Adaptive）の4通りにしたが、BSP の Adaptive と Quadtree の Random（面積に比例して割ると均一な格子になる）は使わないので、Mode をなくして「BSP なら seed、Quadtree なら色」に固定した（ユーザーの希望。パラメータを減らす）
+- 共有の `rng` の消費をそろえるため、Quadtree でも BSP の分割を1回走らせる
+- Quadtree は seed で形が変わらない（ルールと、領域の番号のハッシュで決まるもの（大きなマス・Stagger・2色塗り・斜め）は変わる）
+- 分裂・合体はしない（ユーザーの選択）。エンジンでも `evolveRegions` を呼ばず、GUI の Split / merge と Interval は値を残して無効（灰色）にする
+- Detail（`quadRegions`、作り直し。50〜1000、初期値 250）：Quadtree のときだけ出す領域数の目安。細かさの参考画像（領域数 80・250・700、面積の効き 0・0.25）を見比べて、領域数だけを GUI に出すことにした（ユーザーの判断）
+- Cell size の上限は Layout ごと（`CELL_MAX_FRAC`）。BSP は短辺の 6.25%、Quadtree は 2%（短辺 50 マス）。マスが少ないと割る余地がなく、均一な格子に近くなるため。Layout を変えたら `updateCellRange` で範囲を作り直し、範囲の外なら寄せる（BSP に戻しても元の値には戻らない）
+
+Quadtree（`subdivideQuadtree`）：
+- 正方形は画面で見て正方形（マスの高さ比が ×1 以外でも）。最小の葉（単位）は、長いほうのマスの辺 × `quadLeaf`（2）px の正方形で、マスの数では ux × uy。高さ比が整数でなく割り切れなければ、1割まで正方形からずれるのを許す。短い辺に単位が `quadMinLeaves`（16）個並ばない大きな cellSize では葉を 1 マスに下げる
+- 根：単位で数えて 2 のべき乗 R の正方形を敷き詰める。R は、縦横どちらも余りが R/2 以下になる最大のもの。余りは右端・下端の根に含める（端の根だけ最大 1.5:1 の長方形。ユーザーの了承済み）。最初は余りの帯を 2 のべき乗の小さな正方形で埋めたが、写真に関係なく右端・下端に8マスの正方形が並んでしまった
+- 割るときは縦横をそれぞれ真ん中で割る（8・4・2 の倍数にそろえられて、ずれが1割以内ならそろえる）。2 のべき乗の正方形はちょうど半分なので、8マス以上の葉は位置も辺も8マスの倍数にそろい、大きなマスが欠けない。端の根の中で単位が奇数のところは 1:2 に割れるので、端には 2:1 の最小の葉ができることがある
+- 割る順：平均の誤差（RMS）が最大の葉から4つに割り、`quadRegions` 個以上で止める。面積は見ない。最初は「割ったときに減る SSE」と最小の葉 8マスにしたが、大きさがそろってほぼ均一の格子になった。面積の効き（RMS × 面積^0.25）も試したが、大きな領域から割れて格子に近くなるので外した（ユーザーも同意）。最小の葉 2マス・RMS だけで、2〜64マスまで広く分かれる（短辺 200 マスの sample01）
+- 重さ：450×300 マスで 1000 領域でも1世代 2.7ms 程度（BSP とほぼ同じ）。作り直しは 1000 領域で約 0.2 秒
 
 ## 大きなマス（Big cells）
 
@@ -263,7 +270,7 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
 
 - 対象ブラウザは Chrome デスクトップ
 - 写真テクスチャは長辺 4096px（と `MAX_TEXTURE_SIZE`）まで縮小する
-- `cellSize` の範囲は写真の短辺の 0.5%〜6.25%（最小 4px）。0.5% にしているのは、写真の大きさに関係なくマスの数（3:2 で約6万）と重さを一定にするため。6.25% は短辺が16マス。マスの高さの最小は 2px
+- `cellSize` の範囲は写真の短辺の 0.5%〜6.25%（Quadtree は 2% まで。最小 4px）。0.5% にしているのは、写真の大きさに関係なくマスの数（3:2 で約6万）と重さを一定にするため。6.25% は短辺が16マス。マスの高さの最小は 2px
 - Tweakpane のスライダーはあとから min・max を変えられないので、写真を読み込むたびに cellSize のスライダーを同じ位置（`index`）に作り直している（`updateCellRange`）
 - 速さの目安：750×450 マスで1世代 3ms 程度（A＋B で約2倍）。いちばん重い組み合わせ（cellSize が最小・高さ比 1/5）は、3:2 の写真で 300×1000 マス程度で、これと同じくらい
 
@@ -273,7 +280,7 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
   - `test/sim.test.js`：決定性（動き方 × 味付け × 途中の chaos 変更）、C の流し込みで写真が元の位置に並ぶこと、E の ×2 が ×1 の2世代と同じこと、など
   - `test/scale.test.js`：大きなマス。中の各マスがそろうこと、s 世代に1回だけ変わること、途中の変更を含む決定性
   - `test/topology.test.js`：分裂・合体と漏れ。領域がすき間・重なりなく画面を覆うこと、タイルが保たれること、途中の変更を含む決定性、4方向の漏れ、×2 でも領域の処理順で結果が変わらないこと
-  - `test/regions.test.js`：初期の分け方 Adaptive。すき間・重なりなく覆うこと、色の境目で切ること、seed によらないこと、決定性
+  - `test/regions.test.js`：Quadtree。すき間・重なりなく覆うこと、ほぼ正方形になること、割り切れる大きさなら正方形で8マスの倍数にそろうこと、色の境目で切ること、seed によらないこと、分裂・合体しないこと、決定性
   - `test/golden.test.js`：ゴールデン
 - **ゴールデン**（`test/golden.json`）：固定の合成画像・固定パラメータ（再生中の操作を含む）で、500世代後の状態と `src` のハッシュ。生成結果が変わるとテストが落ちる
   - 意図した変更なら `ENGINE_VERSION` を上げてから `npm run golden` で更新する。**バージョンを上げずにゴールデンだけ更新しないこと**

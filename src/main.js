@@ -17,7 +17,8 @@ const CONFIG = {
   cellSize: 24,   // 1マスの幅（元写真の px）
   cellAspect: 4,  // 1マスの高さの比率（ASPECTS の番号）。高さ = 幅 × 比率。4 = 1:1
   K: 7,           // 状態数 = パレット色数
-  regionMode: 'random', // 初期の領域の分け方 'random'（seed で再帰2分割） | 'adaptive'（色のばらつきで分ける）
+  regionLayout: 'bsp', // 初期の領域の形 'bsp'（seed で再帰2分割） | 'quadtree'（色のばらつきで正方形を4分割。分裂・合体はしない）
+  quadRegions: 250,    // quadtree の領域数の目安（GUI の Detail。作り直し）
   bigFrac: 0.3,   // 大きなマス（2×2・4×4・8×8 マスを1マスとして計算する）にする領域の割合（即時反映）
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 12,        // 世代/秒（即時反映）
@@ -92,13 +93,15 @@ const FLAVORS = {
 // マスの高さ比率の段階（高さ = 幅 × p）。kivi と同じ
 // cellSize の範囲は写真の短辺に対する割合で決める（写真が変わると範囲も変わる）
 //   最小：短辺の 0.5%（短辺が約200マス。写真の大きさに関係なくマスの数が一定になり、重さも一定）
-//   最大：短辺の 6.25%（短辺が16マス。これより粗いと領域に分けたときに CA らしさが出にくい）
-const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = 0.0625, CELL_MIN_PX = 4;
+//   最大：短辺の 6.25%（短辺が16マス。これより粗いと領域に分けたときに CA らしさが出にくい）。
+//   Quadtree は 2%（短辺が50マス）。マスが少ないと割る余地がなく、均一な格子に近くなる
+const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = { bsp: 0.0625, quadtree: 0.02 }, CELL_MIN_PX = 4;
+const cellMaxFrac = () => CELL_MAX_FRAC[CONFIG.regionLayout] ?? CELL_MAX_FRAC.bsp;
 const cellRange = () => {
   if (!bitmap) return { min: 12, max: 64 };
   const s = Math.min(bitmap.width, bitmap.height);
   const min = Math.max(CELL_MIN_PX, Math.round(s * CELL_MIN_FRAC));
-  return { min, max: Math.max(min + 1, Math.round(s * CELL_MAX_FRAC)) };
+  return { min, max: Math.max(min + 1, Math.round(s * cellMaxFrac())) };
 };
 const ASPECTS = [
   { p: 1 / 5, label: '1/5' }, { p: 1 / 4, label: '1/4' }, { p: 1 / 3, label: '1/3' },
@@ -154,7 +157,7 @@ function rebuild() {
   const padded = paddedCanvas(bitmap, g);
   const Ax = Math.max(1, Math.min(ANALYSIS_SUB, cw)), Ay = Math.max(1, Math.min(ANALYSIS_SUB, ch));
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * Ax, g.rows * Ay)), stride: g.cols * Ax };
-  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, regionMode: CONFIG.regionMode, ...FLAVORS[CONFIG.flavor] };
+  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, regionLayout: CONFIG.regionLayout, quadRegions: CONFIG.quadRegions, ...FLAVORS[CONFIG.flavor] };
   for (const k of Simulation.LIVE) P[k] = CONFIG[k];
   const io = { cols: g.cols, rows: g.rows, Ax, Ay, analysis, cw, ch };
   sim = new Simulation(P, io);
@@ -574,10 +577,22 @@ function stopCamera(restore = true) {
   status = '';
 }
 
+// Regions（初期の領域の分け方。作り直し）
+const fr = pane.addFolder({ title: 'Regions' });
+const refreshRegions = () => {
+  const quad = CONFIG.regionLayout === 'quadtree';
+  cDetail.hidden = !quad;
+  // quadtree では分裂・合体しない（Evolve の項目は値を残して無効にする）
+  cTopology.disabled = cTopologyInterval.disabled = quad;
+};
+// Cell size の範囲も Layout で変わる（範囲の外なら寄せる）
+tip(onRebuild(list(fr, 'regionLayout', 'Layout', { 'BSP': 'bsp', 'Quadtree': 'quadtree' }), () => { updateCellRange(); aspectName(); refreshRegions(); }),
+  'Shape of the initial regions\nBSP: rectangles split in two at random positions from the seed\nQuadtree: squares split in four where the image changes most, so flat areas stay large and detailed areas get small. The seed does not change the layout. Split / merge is off. Cell size is limited to 2% of the short side')
+const cDetail = num(fr, 'quadRegions', '　└ Detail', 50, 1000, 10);
+tip(onRebuild(cDetail), 'Quadtree only. Number of regions (about; 50–1000). More regions split detailed areas finer; flat areas stay large. Small cells leave more room to split');
+
 // Grid（グリッドと状態数。すべて作り直し）
 const f1 = pane.addFolder({ title: 'Grid' });
-tip(onRebuild(list(f1, 'regionMode', 'Regions', { 'Random': 'random', 'Adaptive': 'adaptive' })),
-  'How the image is first divided into regions\nRandom: recursive splits from the seed\nAdaptive: splits where the image changes most, so flat areas get large regions and detailed areas small ones. The seed does not change the layout');
 tip(onRebuild(num(f1, 'seed', 'Seed', 0, 999999, 1)), 'Random seed. Same image, parameters and seed give the same video');
 let cCell = null;
 // cellSize のスライダーを今の写真の範囲で作り直す（Tweakpane はあとから min・max を変えられないので、同じ位置に作り直す）。
@@ -589,7 +604,7 @@ function updateCellRange() {
   if (cCell) { index = f1.children.indexOf(cCell); cCell.dispose(); }
   cCell = f1.addBinding(CONFIG, 'cellSize', { label: 'Cell size', min, max, step: 1, index });
   onRebuild(cCell, () => aspectName()); // aspectName はこの下で定義される
-  tip(cCell, `Cell width in image px (${min}–${max}: 0.5%–6.25% of the short side). The range changes with the image`);
+  tip(cCell, `Cell width in image px (${min}–${max}: 0.5%–${+(cellMaxFrac() * 100).toFixed(2)}% of the short side). The range changes with the image and Layout`);
 }
 updateCellRange();
 // 高さ比：番号のスライダー。表示名に今の比率と高さを出す
@@ -798,6 +813,7 @@ onLive(cTempo, 'tempo', refreshFx);
 onLive(cTopology, 'topology', refreshFx);
 onLive(cLeakEnabled, 'leakEnabled', refreshFx);
 refreshFx();
+refreshRegions();
 const cStagger = num(fx, 'stagger', 'Stagger', 0, 300, 1);
 onLive(cStagger, 'stagger');
 tip(cStagger, 'Each region stays as the photo until a generation between 0 and this value, then starts to break up. 0 = all regions start together. Changing it only affects regions that have not started yet');
