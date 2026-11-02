@@ -76,7 +76,8 @@ const CONFIG = {
   depthShadow: 0.45,     // 影の濃さ
   depthAO: 0.65,         // 接地の暗がりの濃さ
   depthLive: false,      // 再生中も立体にする（重さを見る用）
-  regionBorders: false, // デバッグ：白い領域境界（描画だけに効く。ON なら PNG にも入る）
+  regionBorders: false, // デバッグ：領域境界（描画だけに効く。ON なら PNG にも入る）
+  borderColor: 'white', // 領域境界の色（'white' / 'black'）
   fit: 'contain', // 'contain' = 全体を収める（余白） / 'cover' = 埋める（切り取り）
   // ---- 入力（カメラ。写真テクスチャを毎フレーム差し替え、分類も世代ごとに今のフレームから作り直す）----
   camera: false,    // カメラを入力にする
@@ -427,7 +428,7 @@ function frame(t) {
   updateShrink();
   updateDepth(dt);
   renderer.draw(CONFIG.fit);
-  borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit);
+  borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit, CONFIG.borderColor);
   updateInfo();
   requestAnimationFrame(frame);
 }
@@ -638,8 +639,14 @@ tip(num(f2, 'gps', 'Speed', 0.5, 48, 0.5), 'Generations per second'); // 再生�
 // Render（描画だけに効く。作り直し不要）
 const f3 = pane.addFolder({ title: 'Render' });
 tip(list(f3, 'fit', 'Fit', { 'Contain': 'contain', 'Cover': 'cover' }), 'Contain: fit the whole image (letterbox)\nCover: fill the screen (crop)');
-tip(f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' }),
-  'Show region boundaries as thin white lines (D key). Also included in saved PNGs');
+const cBorders = f3.addBinding(CONFIG, 'regionBorders', { label: 'Region borders' });
+tip(cBorders, 'Show region boundaries as thin lines (D key). Also included in saved PNGs');
+const cBorderColor = list(f3, 'borderColor', '　└ Color', { 'White': 'white', 'Black': 'black' });
+tip(cBorderColor, 'Color of the region boundary lines');
+// guiSync() の refresh でも change が来るので、D キーで切り替えたときもここで表示を合わせる
+const refreshBorders = () => { cBorderColor.hidden = !CONFIG.regionBorders; };
+cBorders.on('change', refreshBorders);
+refreshBorders();
 const cFlat = num(f3, 'flatRatio', 'Flat fill', 0, 1, 0.1);
 const cFlatSub = [
   list(f3, 'flatUnit', '　└ Group', { 'Per tile': 'tile', 'Per color': 'state' }),
@@ -865,7 +872,7 @@ function savePNG() {
   const gen = sim.gen, seed = sim.P.seed;
   const cv = renderer.snapshot();
   if (!cv) return;
-  if (CONFIG.regionBorders) borders.drawOnto(cv, renderer.grid, sim.regions); // 画面で見えているときは PNG にも入れる
+  if (CONFIG.regionBorders) borders.drawOnto(cv, renderer.grid, sim.regions, CONFIG.borderColor); // 画面で見えているときは PNG にも入れる
   cv.toBlob((blob) => {
     if (!blob) { status = 'PNG を書き出せませんでした'; return; }
     const a = document.createElement('a');
