@@ -75,6 +75,8 @@ const CONFIG = {
   depthSoft: 0.85,       // 影の柔らかさ（0 = 固い影）
   depthShadow: 0.45,     // 影の濃さ
   depthAO: 0.65,         // 接地の暗がりの濃さ
+  depthKeep: true,       // 影で暗くなった分、日が当たっているところを明るくして全体の明るさを保つ（試作）
+  depthRim: 0.5,         // 光の側の縁を明るくする強さ（0 = なし。試作）
   depthLive: false,      // 再生中も立体にする（重さを見る用）
   regionBorders: false, // デバッグ：領域境界（描画だけに効く。ON なら PNG にも入る）
   borderColor: 'white', // 領域境界の色（'white' / 'black'）
@@ -232,6 +234,7 @@ function updateDepth(dt) {
   renderer.setDepth({
     height: CONFIG.depth * e, mode: CONFIG.depthMode, weight: CONFIG.depthSize, accent: CONFIG.depthAccent,
     light: CONFIG.depthLight, soft: CONFIG.depthSoft, shadow: CONFIG.depthShadow, ao: CONFIG.depthAO,
+    keep: CONFIG.depthKeep, rim: CONFIG.depthRim,
   });
 }
 
@@ -752,6 +755,8 @@ const cDepthSub = [
   num(fd, 'depthSoft', '　└ Softness', 0, 1, 0.01),
   num(fd, 'depthShadow', '　└ Shadow', 0, 1, 0.01),
   num(fd, 'depthAO', '　└ AO', 0, 1, 0.01),
+  fd.addBinding(CONFIG, 'depthKeep', { label: '　└ Keep brightness' }),
+  num(fd, 'depthRim', '　└ Rim', 0, 1, 0.01),
   fd.addBinding(CONFIG, 'depthLive', { label: '　└ While playing' }),
 ];
 tip(cDepth, 'While paused, raises each cell into a block seen from straight above and casts shadows. Brighter cells stand taller (cell size via Size). Height of a bright cell, in cell widths (towers from Accent go higher). 0 = off');
@@ -762,7 +767,9 @@ tip(cDepthSub[3], 'Direction the light comes from, in degrees (0 = top, clockwis
 tip(cDepthSub[4], 'Shadow edge softness. 0 = hard');
 tip(cDepthSub[5], 'Shadow darkness');
 tip(cDepthSub[6], 'Darkening at the foot of taller neighbours (ambient occlusion)');
-tip(cDepthSub[7], 'Keep the blocks while playing too (heavier; for testing)');
+tip(cDepthSub[7], 'Brighten the sunlit faces so the picture keeps its overall brightness despite the shadows (measured automatically)');
+tip(cDepthSub[8], 'Highlight on the edges facing the light. 0 = off');
+tip(cDepthSub[9], 'Keep the blocks while playing too (heavier; for testing)');
 const refreshDepth = () => cDepthSub.forEach((c) => { c.hidden = !(CONFIG.depth > 0); });
 cDepth.on('change', () => { refreshDepth(); updateMeans(); });
 refreshDepth();
