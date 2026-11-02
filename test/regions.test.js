@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, ENGINE_DEFAULTS } from '../src/engine/sim.js';
-import { subdivide, subdivideAdaptive, REGION_ALIGN } from '../src/engine/regions.js';
+import { subdivideQuadtree, REGION_ALIGN } from '../src/engine/regions.js';
 import { mulberry32 } from '../src/engine/rng.js';
 import { fakeIO, hashSim } from './helpers.js';
 
@@ -21,44 +21,53 @@ function blockMean(cols, rows, [bx, by, bw, bh]) {
   return mean;
 }
 
-test('Adaptive：すき間・重なりなく覆い、領域数は指定どおり、切る位置は8マスの倍数', () => {
-  const P = ENGINE_DEFAULTS, cols = 160, rows = 104;
-  const mean = new Float32Array(cols * rows * 3);
-  const r = mulberry32(5);
+const ratioOnScreen = ([, , w, h], cw, ch) => Math.max(w * cw, h * ch) / Math.min(w * cw, h * ch);
+const noise = (cols, rows, seed) => {
+  const mean = new Float32Array(cols * rows * 3), r = mulberry32(seed);
   for (let i = 0; i < mean.length; i++) mean[i] = r() * 255;
-  const rects = subdivideAdaptive(P, cols, rows, mean, 20);
-  checkCoverage(rects, cols, rows);
-  assert.equal(rects.length, 20);
-  for (const [x, y, w, h] of rects) {
-    if (x + w < cols) assert.equal((x + w) % REGION_ALIGN, 0);
-    if (y + h < rows) assert.equal((y + h) % REGION_ALIGN, 0);
+  return mean;
+};
+
+test('Quadtree：すき間・重なりなく覆い、どの領域も画面で見てほぼ正方形（端の根の中の、奇数の単位を割った最小の葉でも 2:1 まで）', () => {
+  for (const [cols, rows, cw, ch] of [[160, 104, 1, 1], [151, 97, 1, 1], [344, 216, 1, 1], [96, 300, 24, 6], [300, 90, 6, 24], [120, 90, 24, 16]]) {
+    const rects = subdivideQuadtree(ENGINE_DEFAULTS, cols, rows, noise(cols, rows, 9), 120, cw, ch);
+    checkCoverage(rects, cols, rows);
+    assert.ok(rects.length >= 100, `${cols}×${rows}: ${rects.length}`);
+    for (const g of rects) assert.ok(ratioOnScreen(g, cw, ch) <= 2.2, `${cols}×${rows} ${cw}×${ch}: ${g}`);
   }
 });
 
-test('Adaptive：色の境目で切り、平らなところは大きな領域のまま', () => {
-  const P = ENGINE_DEFAULTS, cols = 160, rows = 120, block = [40, 32, 48, 40];
-  const rects = subdivideAdaptive(P, cols, rows, blockMean(cols, rows, block), 5);
+test('Quadtree：割り切れる大きさなら、すべて正方形で、8マス以上の葉は位置も辺も8マスの倍数（大きなマスが欠けない）', () => {
+  const cols = 256, rows = 128;
+  const rects = subdivideQuadtree(ENGINE_DEFAULTS, cols, rows, noise(cols, rows, 2), 250);
+  assert.ok(rects.some(([, , w]) => w === 2), '最小の葉まで割れる');
+  for (const [x, y, w, h] of rects) {
+    assert.equal(w, h);
+    if (w < REGION_ALIGN) continue;
+    assert.equal(x % REGION_ALIGN, 0); assert.equal(y % REGION_ALIGN, 0); assert.equal(w % REGION_ALIGN, 0);
+  }
+});
+
+test('Quadtree：色の境目のまわりだけ細かく、平らなところは大きな正方形のまま', () => {
+  const cols = 128, rows = 128, block = [48, 48, 16, 16];
+  const rects = subdivideQuadtree(ENGINE_DEFAULTS, cols, rows, blockMean(cols, rows, block), 10);
   checkCoverage(rects, cols, rows);
-  // 長方形の4辺で切ると、どの領域も一色になる（4回の分割で5領域）
   const inside = ([x, y, w, h]) => x >= block[0] && y >= block[1] && x + w <= block[0] + block[2] && y + h <= block[1] + block[3];
   const outside = ([x, y, w, h]) => x + w <= block[0] || x >= block[0] + block[2] || y + h <= block[1] || y >= block[1] + block[3];
   for (const g of rects) assert.ok(inside(g) || outside(g), `領域 ${g} が色の境目をまたがない`);
+  assert.ok(Math.max(...rects.map(([, , w]) => w)) >= 32, '平らなところは大きいまま');
 });
 
-test('Adaptive：seed によらず同じ分け方。領域数は random と同じくらい', () => {
-  const io = fakeIO(96, 72);
+test('Quadtree：seed によらず同じ分け方。分裂・合体はしない。決定的', () => {
+  const io = fakeIO(128, 96);
   const rect = s => s.regions.map(({ x, y, w, h }) => [x, y, w, h]);
-  const color = [1, 2, 3].map(seed => rect(new Simulation({ seed, K: 5, regionMode: 'adaptive' }, io)));
-  assert.deepEqual(color[0], color[1]);
-  assert.deepEqual(color[0], color[2]);
-  const counts = [1, 2, 3, 4, 5, 6].map(seed => new Simulation({ seed, K: 5 }, io).regions.length);
-  assert.ok(color[0].length >= Math.min(...counts) && color[0].length <= Math.max(...counts), `${color[0].length} / ${counts}`);
-});
-
-test('Adaptive：途中の変更を含めて決定的', () => {
+  const make = (seed) => new Simulation({ seed, K: 5, regionLayout: 'quadtree', topology: true, topologyInterval: 12 }, io);
+  assert.deepEqual(rect(make(1)), rect(make(2)));
   const run = () => {
-    const s = new Simulation({ seed: 7, K: 6, regionMode: 'adaptive', topology: true, leakEnabled: true, bigFrac: 0.5, stagger: 30 }, fakeIO(96, 72));
-    for (let i = 0; i < 400; i++) { if (i === 150) s.set('chaos', 0.4); s.step(); }
+    const s = make(4);
+    const before = rect(s);
+    for (let i = 0; i < 300; i++) { if (i === 100) s.set('chaos', 0.4); s.step(); }
+    assert.deepEqual(rect(s), before);
     return hashSim(s);
   };
   assert.equal(run(), run());
