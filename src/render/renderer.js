@@ -17,6 +17,8 @@
 import { FLAT_LAYERS } from '../engine/flat.js';
 import { SCALE_LIST } from '../engine/scale.js';
 
+const GAIN_MAX = 1.8; // 擬似3D で日が当たっているところを明るくする上限
+
 const VS = `#version 300 es
 void main() {
   // 画面全体を覆う三角形1枚
@@ -249,9 +251,20 @@ uniform vec2 uLight;    // 光の来る向き（描画先の px、y は上向き
 uniform float uSoft;    // 影の柔らかさ（0 = 固い影）
 uniform float uShadow;  // 影の濃さ
 uniform float uAO;      // 接地の暗がりの濃さ
+uniform float uGain;    // 日が当たっているところの明るさの倍率（影で暗くなった分を補う。1 = 補わない）
+uniform float uRim;     // 光の側の縁を明るくする強さ（0 = なし）
+uniform float uStep;    // 描画先 1px = 元の描画先何 px か（明るさを測るときは粗く描く。ふだんは 1）
+uniform bool uMeasure;  // 明るさを測る：R = 影を付ける前、G = 付けた後の明るさを書く
 out vec4 outColor;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// 明るいところを白く飛ばさずに丸める（いちばん大きいチャンネルで縮めるので色相は変わらない）
+vec3 shoulder(vec3 c) {
+  const float K = 0.75;
+  float m = max(c.r, max(c.g, c.b));
+  if (m <= K) return c;
+  return c * ((K + (1.0 - K) * (1.0 - exp(-(m - K) / (1.0 - K)))) / m);
+}
 // 高さ（px）。余白（A = 0）と描画先の外は 0
 float heightAt(ivec2 p, ivec2 size) {
   if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, size))) return 0.0;
@@ -262,12 +275,13 @@ float heightAt(ivec2 p, ivec2 size) {
 
 void main() {
   ivec2 size = textureSize(uScene, 0);
-  ivec2 ip = ivec2(gl_FragCoord.xy);
+  vec2 fc = floor(gl_FragCoord.xy) * uStep + 0.5;
+  ivec2 ip = ivec2(fc);
   vec4 sc = texelFetch(uScene, ip, 0);
   if (sc.a == 0.0) { outColor = vec4(0.0); return; }
   vec3 col = sc.rgb;
   float h0 = heightAt(ip, size);
-  float jit = hash(gl_FragCoord.xy);
+  float jit = hash(fc);
 
   // 影：光の向きに進みながら、光線（45°で上がる）より高いところがあるかを見る。
   // 柔らかい影は、光線とさえぎるものの高さの差 ÷ 進んだ距離 の最小値から（距離が遠いほどぼける）
@@ -279,7 +293,7 @@ void main() {
     float kk = mix(0.02, 1.2, uSoft);
     for (int i = 0; i < n; i++) {
       float t = (float(i) + jit) * dt + 0.5;
-      float hs = heightAt(ivec2(gl_FragCoord.xy + uLight * t), size);
+      float hs = heightAt(ivec2(fc + uLight * t), size);
       float d = h0 + t - hs;
       lit = min(lit, d / (kk * t));
       if (lit <= 0.0) break;
@@ -296,17 +310,33 @@ void main() {
     float w = 1.0 / (1.0 + float(j));
     for (int a = 0; a < 8; a++) {
       float ang = (float(a) + jit) * 0.785398 + float(j) * 0.4;
-      float hs = heightAt(ivec2(gl_FragCoord.xy + vec2(cos(ang), sin(ang)) * r), size);
+      float hs = heightAt(ivec2(fc + vec2(cos(ang), sin(ang)) * r), size);
       occ += clamp((hs - h0) / r, 0.0, 1.0) * w;
       wsum += w;
     }
   }
   float ao = 1.0 - uAO * clamp(occ / wsum * 1.6, 0.0, 1.0);
 
+  // 光の側の縁：光の来る向きのすぐ先が低ければ、この画素は光に面した縁（2つの距離で見て少しぼかす）
+  float rim = 0.0;
+  if (uRim > 0.0) {
+    float w = max(1.5, uCellPx * 0.1);
+    float dh = max(h0 - heightAt(ivec2(fc + uLight * w * 0.5), size), h0 - heightAt(ivec2(fc + uLight * w), size));
+    rim = clamp(dh / max(1.0, uCellPx * 0.25), 0.0, 1.0) * lit;
+  }
+
   // 影の色：暗くするだけでなく、色を濃くする（安い CG っぽい灰色の影にしない）
+  vec3 base = col;
   vec3 shade = pow(col, vec3(1.6)) * 0.55;
+  col = shoulder(col * mix(1.0, uGain, lit));
   col = mix(col, shade, uShadow * (1.0 - lit));
   col *= ao;
+  col += (1.0 - col) * rim * uRim * 0.6;
+  if (uMeasure) {
+    const vec3 Y = vec3(0.299, 0.587, 0.114);
+    outColor = vec4(dot(base, Y), dot(col, Y), 0.0, 1.0);
+    return;
+  }
   outColor = vec4(col, 1.0);
 }`;
 
@@ -337,8 +367,8 @@ export class Renderer {
     if (!gl.getProgramParameter(dprog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(dprog));
     this.dprog = dprog;
     this.du = {};
-    for (const n of ['uScene', 'uHpx', 'uCellPx', 'uLight', 'uSoft', 'uShadow', 'uAO']) this.du[n] = gl.getUniformLocation(dprog, n);
-    this.depth = null; this.scene = null;
+    for (const n of ['uScene', 'uHpx', 'uCellPx', 'uLight', 'uSoft', 'uShadow', 'uAO', 'uGain', 'uRim', 'uStep', 'uMeasure']) this.du[n] = gl.getUniformLocation(dprog, n);
+    this.depth = null; this.scene = null; this.gain = 1; this.meter = null;
     this.vao = gl.createVertexArray();
     this.photoTex = null; this.srcTex = null; this.flatTex = null; this.kindTex = null; this.blkTex = null; this.flatOn = false; this.grid = null;
     this.digitTex = null; this.glyphTex = null; this.digitsOn = false; this.digitColor = [1, 1, 1]; this.digitMask = 0;
@@ -433,9 +463,13 @@ export class Renderer {
   /**
    * 擬似3D（試作）。null なら平らに描く。
    * { height（基本のマスの幅の何倍まで。rise を掛ける）, mode（高さの式の番号）, weight（大きさの効き）,
-   *   accent（高さの緩急）, light（光の来る向き。度、0 = 上・時計回り）, soft, shadow, ao（0〜1） }
+   *   accent（高さの緩急）, light（光の来る向き。度、0 = 上・時計回り）, soft, shadow, ao（0〜1）,
+   *   keep（影で暗くなった分、日が当たっているところを明るくする）, rim（光の側の縁の明るさ。0〜1） }
    */
-  setDepth(p) { this.depth = p && p.height > 0 ? p : null; }
+  setDepth(p) {
+    this.depth = p && p.height > 0 ? p : null;
+    if (!this.depth || !this.depth.keep) this.gain = 1;
+  }
 
   // 1回目の描画先（色と高さ）。大きさが変わったら作り直す
   sceneTarget(w, h) {
@@ -550,21 +584,18 @@ export class Renderer {
     const { W, H } = this.grid;
     // 写真 1px をキャンバス何 px で描くか
     const s = (fit === 'cover' ? Math.max : Math.min)(c.width / W, c.height / H);
-    this.drawTo(c.width, c.height, s, s, (c.width - W * s) / 2, (c.height - H * s) / 2);
+    this.drawTo(c.width, c.height, s, s, (c.width - W * s) / 2, (c.height - H * s) / 2, true);
   }
 
   // 今バインドされている描画先（w×h px）に描く。sx, sy = 写真 1px を描画先の何 px にするか、dx, dy = 写真の左上の位置
-  drawTo(w, h, sx, sy, dx, dy) {
+  // measure = 擬似3D の明るさを測って、日が当たっているところの倍率（gain）を合わせる（画面に描くときだけ）
+  drawTo(w, h, sx, sy, dx, dy, measure = false) {
     const dp = this.depth;
     if (!dp) { this.drawBase(w, h, sx, sy, dx, dy, false); return; }
     const gl = this.gl, target = gl.getParameter(gl.FRAMEBUFFER_BINDING);
     const sc = this.sceneTarget(w, h);
     gl.bindFramebuffer(gl.FRAMEBUFFER, sc.fb);
     this.drawBase(w, h, sx, sy, dx, dy, true);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, target);
-    gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
     const { cw, ch } = this.grid, du = this.du;
     const cellPx = Math.sqrt(sx * cw * sy * ch);
     const a = (dp.light * Math.PI) / 180;
@@ -578,7 +609,53 @@ export class Renderer {
     gl.uniform1f(du.uSoft, dp.soft);
     gl.uniform1f(du.uShadow, dp.shadow);
     gl.uniform1f(du.uAO, dp.ao);
+    gl.uniform1f(du.uRim, dp.rim);
+    if (measure && dp.keep) this.measureGain(w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(du.uGain, this.gain);
+    gl.uniform1f(du.uStep, 1);
+    gl.uniform1i(du.uMeasure, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // 影を付ける前と後の平均の明るさを、粗く（METER px ごとに1画素）描いて測り、後が前と同じになるよう gain を少しずつ寄せる。
+  // 毎フレーム少しずつ寄せるので、止めた直後（高さが伸びる間）も追いつく。擬似3D のプログラムを使っている状態で呼ぶ
+  measureGain(w, h) {
+    const gl = this.gl, du = this.du, METER = 8;
+    const mw = Math.max(1, Math.ceil(w / METER)), mh = Math.max(1, Math.ceil(h / METER));
+    if (!this.meter || this.meter.w !== mw || this.meter.h !== mh) {
+      if (this.meter) { gl.deleteFramebuffer(this.meter.fb); gl.deleteTexture(this.meter.tex); }
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, mw, mh);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      this.meter = { w: mw, h: mh, tex, fb, px: new Uint8Array(mw * mh * 4) };
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.scene.tex);
+    }
+    const m = this.meter;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, m.fb);
+    gl.viewport(0, 0, mw, mh);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(du.uGain, this.gain);
+    gl.uniform1f(du.uStep, METER);
+    gl.uniform1i(du.uMeasure, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.readPixels(0, 0, mw, mh, gl.RGBA, gl.UNSIGNED_BYTE, m.px);
+    let before = 0, after = 0;
+    for (let i = 0; i < m.px.length; i += 4) {
+      if (m.px[i + 3] === 0) continue;
+      before += m.px[i]; after += m.px[i + 1];
+    }
+    if (before > 0 && after > 0) {
+      // 上限は、日の当たる面が飛びすぎないように
+      this.gain = Math.min(GAIN_MAX, Math.max(1, this.gain * Math.sqrt(before / after)));
+    }
   }
 
   // depth = A に高さを書く（擬似3D の1回目）
