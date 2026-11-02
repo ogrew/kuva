@@ -4,7 +4,7 @@ import { mulberry32, hash } from './rng.js';
 import { analyze, nearest } from './analyze.js';
 import { makeRulePool, applyChaos } from './rules.js';
 import { evolveRegions, initTopology } from './topology.js';
-import { subdivide } from './regions.js';
+import { subdivide, subdivideAdaptive } from './regions.js';
 import { MOTIONS, PAT_RULES } from './motions.js';
 import { analyzeScale, classifyScale, regionScale } from './scale.js';
 
@@ -59,6 +59,7 @@ export const ENGINE_DEFAULTS = {
   diagFrac: 0,         // All のとき、斜めに流れる領域の割合（0 = 上下左右だけ。GUI の初期値は main.js）
   patSkew: true,       // 斜めに流れる領域で、模様も一緒に斜めに流す（false なら模様はまっすぐ流れる）
   // 領域
+  regionMode: 'random', // 初期の分け方 'random'（seed で再帰2分割） | 'adaptive'（色のばらつきで分ける。seed によらない。領域数は random の平均くらい）
   maxDepth: 7,
   minDepth: 2,
   stopProb: 0.25,
@@ -94,7 +95,15 @@ export class Simulation {
     // 大きなマスの解析（倍率ごと）。最初に使うときに作る（乱数は使わないので、いつ作っても同じ）
     this.scales = { 1: { cls: this.cls, reps: this.reps, mean: this.mean } };
     this.scaleVersion = 0; // 領域の倍率が変わるたびに増える（描画側が作り直しに使う）
-    this.regions = subdivide(P, cols, rows, rng, this.cw, this.ch)
+    // adaptive でも random の分割を1回走らせる（共有の乱数の消費を同じにする）。
+    // 領域数は seed によらないように、固定の seed 8個で random に分けたときの平均にする
+    let rects = subdivide(P, cols, rows, rng, this.cw, this.ch);
+    if (P.regionMode === 'adaptive') {
+      let n = 0;
+      for (let k = 0; k < 8; k++) n += subdivide(P, cols, rows, mulberry32(hash(k, 0x636F6C72)), this.cw, this.ch).length;
+      rects = subdivideAdaptive(P, cols, rows, this.mean, Math.round(n / 8), this.cw, this.ch);
+    }
+    this.regions = rects
       .map(([x, y, w, h], r) => this.createRegion(x, y, w, h, r));
     this.nextRegionId = this.initialRegions = this.regions.length;
     this.maxRegions = Math.max(16, this.regions.length * 2);
