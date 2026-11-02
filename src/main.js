@@ -17,6 +17,7 @@ const CONFIG = {
   cellSize: 24,   // 1マスの幅（元写真の px）
   cellAspect: 4,  // 1マスの高さの比率（ASPECTS の番号）。高さ = 幅 × 比率。4 = 1:1
   K: 7,           // 状態数 = パレット色数
+  regionMode: 'random', // 初期の領域の分け方 'random'（seed で再帰2分割） | 'adaptive'（色のばらつきで分ける）
   bigFrac: 0.3,   // 大きなマス（2×2・4×4・8×8 マスを1マスとして計算する）にする領域の割合（即時反映）
   chaos: 0.1,     // ルール表に混ぜる完全ランダムの割合（即時反映）
   gps: 12,        // 世代/秒（即時反映）
@@ -153,7 +154,7 @@ function rebuild() {
   const padded = paddedCanvas(bitmap, g);
   const Ax = Math.max(1, Math.min(ANALYSIS_SUB, cw)), Ay = Math.max(1, Math.min(ANALYSIS_SUB, ch));
   const analysis = { data: pixelsOf(scaledCanvas(padded, g.cols * Ax, g.rows * Ay)), stride: g.cols * Ax };
-  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, ...FLAVORS[CONFIG.flavor] };
+  const P = { seed: CONFIG.seed, K: CONFIG.K, motion: CONFIG.motion, regionMode: CONFIG.regionMode, ...FLAVORS[CONFIG.flavor] };
   for (const k of Simulation.LIVE) P[k] = CONFIG[k];
   const io = { cols: g.cols, rows: g.rows, Ax, Ay, analysis, cw, ch };
   sim = new Simulation(P, io);
@@ -575,6 +576,8 @@ function stopCamera(restore = true) {
 
 // Grid（グリッドと状態数。すべて作り直し）
 const f1 = pane.addFolder({ title: 'Grid' });
+tip(onRebuild(list(f1, 'regionMode', 'Regions', { 'Random': 'random', 'Adaptive': 'adaptive' })),
+  'How the image is first divided into regions\nRandom: recursive splits from the seed\nAdaptive: splits where the image changes most, so flat areas get large regions and detailed areas small ones. The seed does not change the layout');
 tip(onRebuild(num(f1, 'seed', 'Seed', 0, 999999, 1)), 'Random seed. Same image, parameters and seed give the same video');
 let cCell = null;
 // cellSize のスライダーを今の写真の範囲で作り直す（Tweakpane はあとから min・max を変えられないので、同じ位置に作り直す）。

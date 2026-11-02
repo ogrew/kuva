@@ -48,3 +48,60 @@ export function subdivide(P, cols, rows, rng, cw = 1, ch = 1) {
   })(0, 0, cols, rows, 0);
   return out;
 }
+
+/**
+ * 色のばらつきで分ける（regionMode = 'adaptive'）。乱数は使わず、写真だけで決まる。
+ * 平均色からの差の2乗の合計（SSE）を、割ったときに最も減らせる領域から順に割り、count 個になったら止める。
+ * 切る位置は、縦横すべての候補（alignCut でそろえたもの）から、割ったあとの SSE の合計が最小になるもの。
+ * 最小領域は subdivide と同じ。mean = セルごとの平均色（RGB を3つずつ）
+ * 戻り値は subdivide と同じ形。並びは分割の木の順（割った領域の位置に2つの子を入れる）
+ */
+export function subdivideAdaptive(P, cols, rows, mean, count, cw = 1, ch = 1) {
+  const physLong = Math.max(cols * cw, rows * ch);
+  const minX = Math.max(2, Math.round(P.minRegionFrac * physLong / cw));
+  const minY = Math.max(2, Math.round(P.minRegionFrac * physLong / ch));
+  // 累積和（R・G・B・2乗の和）。S[(y * (cols + 1) + x) * 4] = (0,0)〜(x,y) の手前までの和
+  const W = cols + 1, S = new Float64Array(W * (rows + 1) * 4);
+  for (let y = 0; y < rows; y++) {
+    const r = [0, 0, 0, 0];
+    for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * 3, R = mean[i], G = mean[i + 1], B = mean[i + 2];
+      r[0] += R; r[1] += G; r[2] += B; r[3] += R * R + G * G + B * B;
+      const o = ((y + 1) * W + x + 1) * 4, u = (y * W + x + 1) * 4;
+      for (let c = 0; c < 4; c++) S[o + c] = S[u + c] + r[c];
+    }
+  }
+  const sse = (x, y, w, h) => {
+    const a = (y * W + x) * 4, b = (y * W + x + w) * 4, c = ((y + h) * W + x) * 4, d = ((y + h) * W + x + w) * 4;
+    const v = c4 => S[d + c4] - S[b + c4] - S[c + c4] + S[a + c4];
+    const R = v(0), G = v(1), B = v(2);
+    return v(3) - (R * R + G * G + B * B) / (w * h);
+  };
+  // 領域の最良の切り方（gain = 減らせる SSE。割れなければ -1）
+  const best = (x, y, w, h) => {
+    const g = { rect: [x, y, w, h], gain: -1, kids: null }, whole = sse(x, y, w, h);
+    const tryAxis = (vert) => {
+      const len = vert ? w : h, min = vert ? minX : minY, pos = vert ? x : y;
+      if (len < min * 2) return;
+      const seen = new Set();
+      for (let c = min; c <= len - min; c++) {
+        const a = alignCut(pos, len, c, min);
+        if (seen.has(a) || a < 1 || a > len - 1) continue;
+        seen.add(a);
+        const kids = vert ? [[x, y, a, h], [x + a, y, w - a, h]] : [[x, y, w, a], [x, y + a, w, h - a]];
+        const gain = whole - sse(...kids[0]) - sse(...kids[1]);
+        if (gain > g.gain) { g.gain = gain; g.kids = kids; }
+      }
+    };
+    tryAxis(true); tryAxis(false);
+    return g;
+  };
+  const leaves = [best(0, 0, cols, rows)];
+  while (leaves.length < count) {
+    let k = -1;
+    for (let i = 0; i < leaves.length; i++) if (leaves[i].kids && (k < 0 || leaves[i].gain > leaves[k].gain)) k = i;
+    if (k < 0) break;
+    leaves.splice(k, 1, ...leaves[k].kids.map(r => best(...r)));
+  }
+  return leaves.map(g => g.rect);
+}

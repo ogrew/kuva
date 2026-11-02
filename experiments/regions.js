@@ -10,7 +10,7 @@ export const studies = [
   { title: '隣からの漏れ', topology: false, leak: 0.6 },
   { title: '分裂・合体 ＋ 漏れ', topology: true, leak: 0.6 },
 ];
-let bitmap, layout, io, photo, running = true, outlines = false, acc = 0, last = 0, loadSeq = 0;
+let bitmap, layout, io, photo, running = true, outlines = false, regionMode = 'random', acc = 0, last = 0, loadSeq = 0;
 const status = document.querySelector('#status');
 for (const item of studies) {
   const article = document.createElement('article');
@@ -25,7 +25,7 @@ for (const item of studies) {
 export function reset() {
   if (!io) return;
   for (const item of studies) {
-    item.sim = new Simulation({ seed: 42, K: 7, chaos: 0.15, motion: 'flow', ruleMorph: true, regionRules: false,
+    item.sim = new Simulation({ seed: 42, K: 7, chaos: 0.15, motion: 'flow', regionMode, ruleMorph: true, regionRules: false,
       topology: item.topology, leakEnabled: item.leak > 0, leak: item.leak, inject: false, tempo: false, patFrac: 0 }, io);
     item.renderer.setPhoto(layout, photo);
   }
@@ -54,7 +54,7 @@ function draw() {
       for (const g of item.sim.regions) ctx.strokeRect(dx + g.x * layout.cw * scale, dy + g.y * layout.ch * scale, g.w * layout.cw * scale, g.h * layout.ch * scale);
     }
   }
-  status.textContent = `${running ? '再生中' : '停止'} / ${studies[0].sim?.gen ?? 0}世代 / seed 42 / 境界線${outlines ? 'ON' : 'OFF'}`;
+  status.textContent = `${running ? '再生中' : '停止'} / ${studies[0].sim?.gen ?? 0}世代 / seed 42 / 初期の分け方 ${regionMode === 'adaptive' ? 'Adaptive' : 'Random'} / 境界線${outlines ? 'ON' : 'OFF'}`;
 }
 async function load(blob) {
   const seq = ++loadSeq;
@@ -77,6 +77,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space') { e.preventDefault(); running = !running; acc = 0; draw(); }
   if (e.key.toLowerCase() === 'r') reset();
   if (e.key.toLowerCase() === 'b') { outlines = !outlines; draw(); }
+  if (e.key.toLowerCase() === 'm') { regionMode = regionMode === 'adaptive' ? 'random' : 'adaptive'; reset(); }
 });
 window.addEventListener('resize', draw);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { running = false; acc = 0; draw(); } });

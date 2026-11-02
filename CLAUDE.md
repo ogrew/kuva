@@ -46,7 +46,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `public/favicon.svg` | favicon。16×16 マスのドットの k の数行だけを横にずらしたもの（崩れた k） |
 | `samples/` | サンプル画像。開いたときにランダムに1枚を読み込み、I キーで次のサンプルへ（パラメータはそのまま。`loadSample`）。一覧は `import.meta.glob` でビルド時に作るので、置くだけで候補に入る。公開される（AI 生成の画像。埋め込みの XMP は生成元のラベルと ID だけ） |
 | `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
-| `experiments/regions.html` | 開発サーバ専用の比較ページ。同じ写真・seed・世代で「従来／分裂・合体／漏れ／両方」の4画面を並べる（Space・R・B、写真のドロップ）。公開ビルドには入れていない |
+| `experiments/regions.html` | 開発サーバ専用の比較ページ。同じ写真・seed・世代で「従来／分裂・合体／漏れ／両方」の4画面を並べる（Space・R・B、M で初期の分け方を Random／Adaptive に切り替え、写真のドロップ）。公開ビルドには入れていない |
 
 ## エンジンのパイプライン
 
@@ -56,7 +56,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 2. k-means（k-means++ 初期化）で K 色 → **輝度順に並べ替え**（状態 0 = 暗い）
 3. 各セルを状態に分類し、状態ごとに代表タイルをリザーバサンプリング
 4. 共有のルールプールを作る。インデックスは `((L*K + C)*K + R)*K + I`
-5. 領域を再帰2分割し、領域ごとに動き方を初期化（向き・境界の固定値・ルール）
+5. 領域を再帰2分割し（`regionMode`：`random` か `adaptive`。下の「初期の分け方」）、領域ごとに動き方を初期化（向き・境界の固定値・ルール）
 
 1世代（`step()`）：領域ごとに `MOTIONS[motion].step(g, sim, prev, next)`。前の世代 `cur` と次の世代 `nxt`（それぞれ `state` と `src`）を入れ替えて `gen++`。
 
@@ -98,7 +98,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 - 短いラベルで伝わりにくいものは `binding.element.title` にマウスを乗せたときの説明を書く
 - 選択肢が排他的なものはプルダウン
 - GUI のラベル・ツールチップ・状態パネルのメッセージは英語（短い名詞だけにして、単位や範囲はツールチップに書く）。コードのコメントは日本語
-- フォルダは Input（Camera・Mirror・Device）／Grid（Seed・Cell size・Aspect・Colors・Big cells）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
+- フォルダは Input（Camera・Mirror・Device）／Grid（Regions・Seed・Cell size・Aspect・Colors・Big cells）／Motion（Motion・Direction・Chaos・Speed）／Render／Evolve／Pattern。フォルダ番号は付けない
 - パネルの先頭はタイトルバーを大きくしたヘッダー（`kuva` と `PHOTO × 1D CELLULAR AUTOMATA`、`.head`）。押すと畳めるのはそのまま。写真名・grid・seed は Status パネルにあるので、ヘッダーには出さない
 - 見た目は同じ作者の p5-hiragana-mosaic に合わせている（パネルまわりだけ）。白の半透明のパネル（`.panel` の中に Tweakpane。`--tp-*` の色は hiragana と同じ）、Space Grotesk ＋ M PLUS 1p（Google Fonts。オフラインでは別のフォントになってよい）、左下に Follow／GitHub のリンク（H で一緒に隠れる）
 - 背景は入力写真のぼかし（`#bg`）。写真を読み込んだときに1回だけ、縮小してぼかした画像を作る（`updateBackdrop`。毎フレームは描かない。`backdrop-filter` は下の映像が毎フレーム変わるので使わない）。描画は元写真の外側を透明にしているので、Fit = contain の余白にだけ見える
@@ -142,6 +142,16 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
 - Stagger との併用：候補は崩れ始めた領域だけ。新しい領域も始まったものとして引き継ぎ、待っている領域の元写真は崩さない
 - 2色塗りとの併用：`sim.regions` の配列が入れ替わったら、描画側（`showSim`）で塗り分けを作り直す
 - 漏れは「流れる」のときだけ（GUI も flow のときだけ表示）。先頭の行の入口を4等分した帯ごとに、24世代ごとにハッシュで開き（帯の幅は行の長さに比例。以前は4マス固定だったが、ユーザーの希望で4等分にした）、開いたところは上流側の隣の領域のタイルと状態をそのまま取り込む。写真の流し込み中は写真を優先し、画面の外とはつながない
+
+## 初期の分け方（Regions、試作）
+
+- GUI の Grid フォルダの先頭の Regions（`regionMode`、作り直し）。Random（`random`。従来。seed で向きと位置を決める再帰2分割）と Adaptive（`adaptive`、`subdivideAdaptive`）。Color という名前は Colors（K）と紛らわしいので Adaptive にした。エンジンの既定値・GUI の初期値は `random`（ゴールデンは変わらない）。Quadtree の事例で「色のばらつきで分ける」見た目が良かったので、まず BSP のまま試した。やめるときに戻しやすいよう選択式にした（ユーザーの希望）
+- `adaptive`：セルの平均色の SSE（平均色からの差の2乗の合計）を累積和で求め、割ったときに SSE が最も減る領域から順に割る。切る位置は縦横すべての候補（`alignCut` でそろえたもの）から、割ったあとの SSE の合計が最小のもの。最小領域は random と同じ。乱数は使わない
+- 領域数は seed によらないように、固定の seed 8個で random に分けたときの平均にする（しきい値で止めると写真のコントラストで数が大きく変わるため）。seed の分割から数を取ると、seed で分割の深さが変わって形も変わってしまった
+- 共有の `rng` の消費をそろえるため、adaptive でも random の分割を1回走らせる
+- seed は領域の形を変えないが、領域の番号のハッシュで決まるもの（大きなマス・Stagger・2色塗り・斜め）とルールは変わる
+- 分裂・合体（F）は従来のランダムなまま。時間がたつと色で分けた構図は崩れていく
+- Quadtree（4分割）への切り替えは、これを見てから検討する。エンジン・描画は「長方形がすき間なく画面を覆う」ことしか前提にしていないので、初期の分割の差し替えは小さい。分裂・合体を Quadtree 流（兄弟4つの合体）にするには親子関係が要る
 
 ## 大きなマス（Big cells）
 
@@ -263,6 +273,7 @@ Split / merge（F、`topology`）と Region leak（`leakEnabled`・`leak`）も 
   - `test/sim.test.js`：決定性（動き方 × 味付け × 途中の chaos 変更）、C の流し込みで写真が元の位置に並ぶこと、E の ×2 が ×1 の2世代と同じこと、など
   - `test/scale.test.js`：大きなマス。中の各マスがそろうこと、s 世代に1回だけ変わること、途中の変更を含む決定性
   - `test/topology.test.js`：分裂・合体と漏れ。領域がすき間・重なりなく画面を覆うこと、タイルが保たれること、途中の変更を含む決定性、4方向の漏れ、×2 でも領域の処理順で結果が変わらないこと
+  - `test/regions.test.js`：初期の分け方 Adaptive。すき間・重なりなく覆うこと、色の境目で切ること、seed によらないこと、決定性
   - `test/golden.test.js`：ゴールデン
 - **ゴールデン**（`test/golden.json`）：固定の合成画像・固定パラメータ（再生中の操作を含む）で、500世代後の状態と `src` のハッシュ。生成結果が変わるとテストが落ちる
   - 意図した変更なら `ENGINE_VERSION` を上げてから `npm run golden` で更新する。**バージョンを上げずにゴールデンだけ更新しないこと**
