@@ -15,14 +15,21 @@ export class Camera {
   }
 
   get on() { return !!this.stream; }
+  // 映像が届き続けているか（iOS ではアプリを切り替えるとトラックが終わることがある）
+  get live() { return !!this.stream && this.stream.getVideoTracks().some((t) => t.readyState === 'live'); }
   get width() { return this.video.videoWidth; }
   get height() { return this.video.videoHeight; }
 
-  /** deviceId = '' なら既定のカメラ。解像度は 1920×1080 を目安に頼む（写真テクスチャの上限を超えないように） */
-  async start(deviceId = '') {
+  /**
+   * deviceId = '' なら既定のカメラ。解像度は 1920×1080 を目安に頼む（写真テクスチャの上限を超えないように）。
+   * opts.facing = 'environment'（後ろ） | 'user'（前）：deviceId がないときに向きで選ぶ（スマホ版）。opts.size = 長辺の目安
+   */
+  async start(deviceId = '', opts = {}) {
     this.stop();
-    const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    const long = opts.size ?? 1920, short = Math.round(long * 9 / 16);
+    const video = { width: { ideal: long }, height: { ideal: short } };
     if (deviceId) video.deviceId = { exact: deviceId };
+    else if (opts.facing) video.facingMode = { ideal: opts.facing };
     const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
     this.stream = stream;
     this.deviceId = stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId;
