@@ -11,3 +11,4 @@
 - 残り: Phase 1（小さいタスクを Muse → Codex で完走）
 - 次の一手: Phase 1 のタスクを1つ選ぶ
 - 追記（同日）: Codex 認証完了（ChatGPT サインイン）。雛形ファイルは PR #39 として push 済み。VM 上で `npm test` 72/72 パスを確認
+- 追記（同日・2）: Codex の接続テスト完了。VM プリインストール版（0.164.0-alpha.9）は codex-code-mode-host が無くツール実行不可だったため、公式版 0.170.0 を別途導入。ファイル読み取りを伴うテスト（sim.js の ENGINE_VERSION 確認）まで成功し、Muse → Codex の系統が実働することを確認
