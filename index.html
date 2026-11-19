@@ -86,7 +86,7 @@
     .keys dt { color: var(--ink-2); font-weight: 600; }
     .keys dd { margin: 0; }
 
-    /* Follow／GitHub（左下。H で GUI と一緒に隠れる） */
+    /* Follow／GitHub／Share（左下。H で GUI と一緒に隠れる） */
     #links { position: fixed; left: 20px; bottom: 20px; display: flex; gap: 10px; z-index: 9; }
     #links a {
       padding: 10px 16px; border-radius: 999px; background: rgba(255, 255, 255, 0.78);
@@ -179,6 +179,7 @@
   <nav id="links">
     <a href="https://x.com/dn0t_" target="_blank" rel="noopener noreferrer">Follow</a>
     <a href="https://github.com/ogrew/kuva" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="#" id="share" role="button" title="Copy a link with the current parameters (not the image or camera)">Share</a>
   </nav>
   <!-- スマホ版だけで使う（main.js が body に .mobile を付けたときに出る） -->
   <section id="start">

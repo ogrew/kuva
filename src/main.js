@@ -10,6 +10,7 @@ import { loadBitmap, gridLayout, paddedCanvas, drawPadded, scaledCanvas, pixelsO
 import { Camera } from './camera.js';
 import { Renderer } from './render/renderer.js';
 import { RegionBorders } from './render/region-borders.js';
+import { encodeParams, decodeParams } from './share.js';
 import { DIGIT_FONTS, GLYPH_SETS, GLYPH_SIZE, KANA_FONTS, formatGlyphText, makeGlyphs, parseGlyphText } from './render/glyphs.js';
 
 // スマホ版：指で操作する端末（pointer: coarse。iPad も含む）。入力はカメラだけにし、操作は下のボタンの列で行う。
@@ -92,6 +93,8 @@ const CONFIG = {
   camDevice: '',    // 使うカメラ（'' = 既定）
   camFacing: 'environment', // スマホ版で使うカメラの向き 'environment'（後ろ） | 'user'（前）。前なら左右反転する
 };
+// 既定値（Share の URL には既定値と違う項目だけを書く。スマホ版の上書き・ランダムに決める前に写しておく）
+const DEFAULTS = structuredClone(CONFIG);
 if (MOBILE) {
   CONFIG.camMirror = false; // 最初は後ろのカメラ
   CONFIG.fit = 'cover';     // 縦長の画面いっぱいに映す（下のボタンの列と重なっても余白が出ない）
@@ -138,6 +141,20 @@ const rand = (lo, hi) => lo + Math.random() * (hi - lo);
 CONFIG.seed = Math.floor(Math.random() * 1e6);
 CONFIG.K = Math.floor(rand(RANDOM_K[0], RANDOM_K[1] + 1));
 let pendingCellFrac = Math.exp(rand(Math.log(RANDOM_CELL_FRAC[0]), Math.log(RANDOM_CELL_FRAC[1])));
+// Share の URL から開いたとき：パラメータをランダムの初期値より優先する（GUI を作る前に入れる）。
+// 写真・カメラ・世代は引き継がない。cellSize は写真の短辺に対する割合（cell）で受け取る。
+// 範囲・選択肢の確認は GUI を作ったあと（validateShared）
+const SHARE_SKIP = ['cellSize', 'camera', 'camMirror', 'camDevice', 'camFacing'];
+const shared = decodeParams(location.search, DEFAULTS, { skip: SHARE_SKIP });
+{
+  if (shared.patRules) shared.patRules = shared.patRules.filter((r) => r in PAT_RULES);
+  if (shared.digitShow) shared.digitShow = [...new Set(shared.digitShow.filter((d) => d >= 0 && d <= 9))].sort((a, b) => a - b);
+  for (const k of ['digitColor', 'shrinkColor']) if (k in shared && !/^#[0-9a-f]{6}$/i.test(shared[k])) delete shared[k];
+  if ('kanaText' in shared) shared.kanaText = formatGlyphText(parseGlyphText(shared.kanaText));
+  Object.assign(CONFIG, shared);
+  const cell = Number(QS.get('cell'));
+  if (cell > 0 && cell < 1) pendingCellFrac = cell; // 範囲の外なら updateCellRange が寄せる
+}
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
 const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっくりになるだけで、世代の中身は変わらない）
 
@@ -480,8 +497,10 @@ function guiSync() {
   pane.refresh();
   guiSyncing = false;
 }
-const num = (f, key, label, min, max, step) => f.addBinding(CONFIG, key, { label, min, max, step });
-const list = (f, key, label, options) => f.addBinding(CONFIG, key, { label, options });
+// スライダーの範囲・プルダウンの選択肢を覚えておく（Share の URL の値を確かめるため）
+const RANGES = {}, CHOICES = {};
+const num = (f, key, label, min, max, step) => { RANGES[key] = { min, max, step }; return f.addBinding(CONFIG, key, { label, min, max, step }); };
+const list = (f, key, label, options) => { CHOICES[key] = Object.values(options); return f.addBinding(CONFIG, key, { label, options }); };
 // 作り直し：スライダーは離したとき（ev.last）だけ。即時：動かしている間も反映する
 const onRebuild = (b, also) => b.on('change', (ev) => { if (guiSyncing) return; also?.(); if (ev.last) rebuild(); });
 const onLive = (b, key, also) => b.on('change', (ev) => { if (guiSyncing) return; if (sim) sim.set(key, ev.value); also?.(); });
@@ -902,6 +921,54 @@ pane.addBlade({ view: 'separator' });
   }
   // パネルの中身の入れ物に入れる（タイトルを押して畳んだときに一緒に隠れるように）
   pane.element.querySelector('.tp-rotv_c').appendChild(keys);
+}
+
+// Share の URL の値を確かめる：範囲の外は寄せ、選択肢にない値は既定値に戻す。直したら GUI と表示・非表示を合わせる
+function validateShared() {
+  let fixed = false;
+  for (const k of Object.keys(shared)) {
+    const v = CONFIG[k];
+    if (RANGES[k]) {
+      const { min, max, step } = RANGES[k];
+      let w = Math.min(max, Math.max(min, v));
+      if (step >= 1) w = min + Math.round((w - min) / step) * step; // 番号のスライダー（Aspect、テンポなど）は整数に
+      if (w !== v) { CONFIG[k] = w; fixed = true; }
+    }
+    if (CHOICES[k] && !CHOICES[k].includes(CONFIG[k])) { CONFIG[k] = DEFAULTS[k]; fixed = true; }
+  }
+  if (!fixed) return;
+  guiSync();
+  aspectName(); tempoName();
+  refreshRegions(); refreshDir(); refreshBorders(); refreshDigits(); refreshFlat(); refreshShrink(); refreshDepth(); refreshFx();
+}
+validateShared();
+
+// Share：今のパラメータを入れた URL をクリップボードにコピーする（左下のリンク。写真・カメラ・世代は入れない）
+function shareURL() {
+  const extra = {};
+  if (bitmap) extra.cell = +(CONFIG.cellSize / Math.min(bitmap.width, bitmap.height)).toFixed(5);
+  const q = encodeParams(CONFIG, DEFAULTS, { skip: SHARE_SKIP, always: ['seed', 'K'], extra });
+  return `${location.origin}${location.pathname}?${String(q).replaceAll('%2C', ',')}`; // カンマはそのままでも読める
+}
+{
+  const a = document.getElementById('share');
+  let timer = 0;
+  a.addEventListener('click', async (e) => {
+    e.preventDefault();
+    a.blur();
+    const url = shareURL();
+    try {
+      await navigator.clipboard.writeText(url);
+      status = 'Link copied';
+      a.textContent = 'Copied';
+      clearTimeout(timer);
+      timer = setTimeout(() => { a.textContent = 'Share'; }, 1500);
+    } catch (err) {
+      console.error(err);
+      status = 'Could not copy the link';
+      window.prompt('Copy this link', url);
+    }
+  });
 }
 
 // ---------- スマホ版（下のボタンの列・タブのパネル・最初の画面） ----------
