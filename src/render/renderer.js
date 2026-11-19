@@ -563,9 +563,9 @@ export class Renderer {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RED_INTEGER, gl.INT, src);
   }
 
-  // キャンバスの画素数を表示サイズ × devicePixelRatio に合わせる
+  // キャンバスの画素数を表示サイズ × devicePixelRatio に合わせる（maxDpr で上限。スマホは 3 倍の画面があるので 2 倍に抑える）
   resize() {
-    const c = this.canvas, d = window.devicePixelRatio || 1;
+    const c = this.canvas, d = Math.min(this.maxDpr ?? Infinity, window.devicePixelRatio || 1);
     const w = Math.round(c.clientWidth * d), h = Math.round(c.clientHeight * d);
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   }

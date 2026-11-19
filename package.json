@@ -5,6 +5,7 @@
   "description": "写真1枚を多状態1次元セルオートマトンでリアルタイムに崩し続ける映像ツール",
   "scripts": {
     "dev": "vite",
+    "dev:phone": "KUVA_PHONE=1 vite",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test test/*.test.js",

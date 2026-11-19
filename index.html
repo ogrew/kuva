@@ -2,6 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <!-- スマホ：画面の幅で表示する。maximum-scale は、文字の小さい入力欄を触ったときに iOS が拡大するのを止めるため（指での拡大はできる） -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>kuva</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg">
   <!-- 文字は p5-hiragana-mosaic と同じ（オフラインのときは別のフォントになる） -->
@@ -25,6 +27,8 @@
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; overflow: hidden; }
+    /* スマホでダブルタップの拡大を止める */
+    html { touch-action: manipulation; }
     body {
       font-family: "Space Grotesk", "M PLUS 1p", sans-serif;
       color: var(--ink-1);
@@ -32,8 +36,9 @@
     }
     /* 背景：入力写真のぼかし（写真を読み込んだときに1回だけ作る）。余白（Fit = contain）のところに見える */
     #bg { position: fixed; inset: 0; background: center / cover no-repeat; }
-    #view { position: relative; display: block; width: 100vw; height: 100vh; }
-    #region-borders { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
+    /* dvh：スマホのアドレスバーが出入りしても画面の高さに合わせる */
+    #view { position: relative; display: block; width: 100vw; height: 100vh; height: 100dvh; }
+    #region-borders { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; pointer-events: none; }
     body.bare { cursor: none; }
 
     /* パネル（右上の設定、左下の Status） */
@@ -55,7 +60,7 @@
       --tp-input-foreground-color: #201b16;
     }
     /* 画面より高いときはスクロールさせる */
-    #ui { top: 16px; right: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+    #ui { top: 16px; right: 16px; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
     /* Status はリンクの上に置く */
     #stat { left: 20px; bottom: 70px; }
 
@@ -91,6 +96,78 @@
     }
     #links a:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(32, 27, 22, 0.22); }
     body.bare #links, body.bare .panel { display: none; }
+
+    /* ---------- スマホ版（指で操作する端末。main.js が body に .mobile を付ける） ---------- */
+    #start, #bar, #ui-mark, .tabs, .mobile-hint { display: none; }
+    body.mobile #links, body.mobile #stat, body.mobile .keys { display: none; }
+    body.mobile { --bar-h: calc(64px + env(safe-area-inset-bottom)); }
+    /* 下のボタンの列 */
+    body.mobile #bar {
+      display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 11; height: var(--bar-h);
+      padding: 6px 6px env(safe-area-inset-bottom); background: rgba(255, 255, 255, 0.86);
+      border-top: 1px solid var(--panel-border); box-shadow: 0 -8px 24px rgba(32, 27, 22, 0.14);
+    }
+    #bar button {
+      flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 12px; background: transparent;
+      color: var(--ink-1); font: 600 10px "Space Grotesk", sans-serif; letter-spacing: 0.12em;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #bar button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    #bar button:active, #bar button.on { background: rgba(32, 27, 22, 0.08); }
+    #bar button[hidden] { display: none; }
+    /* 設定：下からせり出すパネル。フォルダはタブで1つずつ出す */
+    body.mobile #ui {
+      top: auto; right: 0; left: 0; bottom: var(--bar-h); width: auto; max-height: 50dvh; padding: 0 12px 12px;
+      border-radius: 20px 20px 0 0; border-bottom: 0; overscroll-behavior: contain;
+      --tp-container-unit-size: 30px; --tp-blade-value-width: 190px;
+    }
+    body.mobile:not(.sheet) #ui { display: none; }
+    body.mobile #ui .tp-rotv { font-size: 13px; }
+    body.mobile #ui .tp-rotv_b, body.mobile #ui .tp-fldv_b, body.mobile #ui .tp-sprv { display: none; }
+    body.mobile .tabs {
+      display: flex; position: sticky; top: 0; z-index: 1; gap: 6px; margin: 0 -12px 8px; padding: 12px 12px 8px;
+      overflow-x: auto; scrollbar-width: none; background: rgba(255, 255, 255, 0.9);
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs button {
+      flex: none; padding: 7px 12px; border-radius: 999px; border: 1px solid rgba(32, 27, 22, 0.16);
+      background: transparent; color: var(--ink-2); font: 600 11px "Space Grotesk", sans-serif; letter-spacing: 0.1em;
+      text-transform: uppercase; -webkit-tap-highlight-color: transparent;
+    }
+    .tabs button.on { background: var(--ink-1); border-color: var(--ink-1); color: #f6f1e6; }
+    body.mobile .mobile-hint { display: block; margin: 6px 4px 2px; font: 12px/1.5 "Space Grotesk", "M PLUS 1p", sans-serif; line-height: 1.5; color: var(--ink-2); }
+    /* UI を出し入れするマーク（右上の kuva。隠しているときは薄く残る） */
+    body.mobile #ui-mark {
+      display: flex; position: fixed; z-index: 12; top: calc(12px + env(safe-area-inset-top)); right: 12px;
+      height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(32, 27, 22, 0.16);
+      align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.82); color: var(--ink-1);
+      font: 700 18px "Space Grotesk", sans-serif; letter-spacing: 0.02em;
+      box-shadow: 0 6px 18px rgba(32, 27, 22, 0.2); -webkit-tap-highlight-color: transparent;
+    }
+    body.mobile.bare #ui-mark { opacity: 0.3; box-shadow: none; }
+    body.mobile.bare #bar { display: none; }
+    /* 最初の画面（カメラの許可を取る前。後ろではサンプルが流れる） */
+    body.mobile.intro #start {
+      display: flex; position: fixed; inset: 0; z-index: 20; align-items: flex-end; justify-content: center;
+      padding: 24px 16px calc(32px + env(safe-area-inset-bottom)); background: linear-gradient(transparent 40%, rgba(0, 0, 0, 0.45));
+    }
+    body.mobile.intro #bar, body.mobile.intro #ui, body.mobile.intro #ui-mark { display: none; }
+    .start-card {
+      width: 100%; max-width: 420px; padding: 22px 20px 18px; border-radius: var(--radius-lg);
+      background: var(--panel); border: 1px solid var(--panel-border); box-shadow: var(--shadow);
+    }
+    .start-title { font-size: 30px; font-weight: 700; letter-spacing: 0.02em; }
+    .start-sub { margin-top: 6px; font-size: 10px; letter-spacing: 0.2em; color: var(--ink-2); }
+    #start-btn {
+      display: block; width: 100%; margin: 18px 0 12px; padding: 15px; border: 0; border-radius: 999px;
+      background: var(--ink-1); color: #f6f1e6; font: 600 13px "Space Grotesk", sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+    }
+    .start-card p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--ink-2); }
+    #start-msg { color: #a23a1f; }
+    #start-msg:empty { display: none; }
+    .start-links { display: flex; gap: 14px; margin-top: 12px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .start-links a { color: var(--ink-1); }
   </style>
 </head>
 <body>
@@ -104,6 +181,31 @@
     <a href="https://github.com/ogrew/kuva" target="_blank" rel="noopener noreferrer">GitHub</a>
     <a href="#" id="share" role="button" title="Copy a link with the current parameters (not the image or camera)">Share</a>
   </nav>
+  <!-- スマホ版だけで使う（main.js が body に .mobile を付けたときに出る） -->
+  <section id="start">
+    <div class="start-card">
+      <div class="start-title">kuva</div>
+      <div class="start-sub">CAMERA × 1D CELLULAR AUTOMATA</div>
+      <button id="start-btn" type="button">Start camera</button>
+      <p id="start-msg"></p>
+      <p>To use your own photos, open this page on a PC.</p>
+      <p>The camera image stays on this device.</p>
+      <div class="start-links">
+        <a href="https://x.com/dn0t_" target="_blank" rel="noopener noreferrer">Follow</a>
+        <a href="https://github.com/ogrew/kuva" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </section>
+  <nav id="bar">
+    <button type="button" data-act="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>PLAY</span></button>
+    <button type="button" data-act="shoot"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/></svg><span>SHOOT</span></button>
+    <button type="button" data-act="seed"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="15" r="1"/><circle cx="15" cy="9" r="1"/><circle cx="9" cy="15" r="1"/></svg><span>SEED</span></button>
+    <button type="button" data-act="flip"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9.5 13.5a2.5 2.5 0 0 1 4.6-1.3M14.5 13.5a2.5 2.5 0 0 1-4.6 1.3"/></svg><span>FLIP</span></button>
+    <button type="button" data-act="save"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span>SAVE</span></button>
+    <button type="button" data-act="full" hidden><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>FULL</span></button>
+    <button type="button" data-act="params"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>PARAMS</span></button>
+  </nav>
+  <button id="ui-mark" type="button" aria-label="Show or hide the controls">kuva</button>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

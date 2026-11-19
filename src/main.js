@@ -13,6 +13,11 @@ import { RegionBorders } from './render/region-borders.js';
 import { encodeParams, decodeParams } from './share.js';
 import { DIGIT_FONTS, GLYPH_SETS, GLYPH_SIZE, KANA_FONTS, formatGlyphText, makeGlyphs, parseGlyphText } from './render/glyphs.js';
 
+// スマホ版：指で操作する端末（pointer: coarse。iPad も含む）。入力はカメラだけにし、操作は下のボタンの列で行う。
+// ?mobile=1 / ?mobile=0 で切り替えられる（PC で確かめる用）
+const QS = new URLSearchParams(location.search);
+const MOBILE = QS.has('mobile') ? QS.get('mobile') !== '0' : matchMedia('(pointer: coarse)').matches;
+
 const CONFIG = {
   seed: 12345,
   cellSize: 24,   // 1マスの幅（元写真の px）
@@ -86,9 +91,14 @@ const CONFIG = {
   camera: false,    // カメラを入力にする
   camMirror: true,  // 左右反転（自撮り向け。変えると作り直し）
   camDevice: '',    // 使うカメラ（'' = 既定）
+  camFacing: 'environment', // スマホ版で使うカメラの向き 'environment'（後ろ） | 'user'（前）。前なら左右反転する
 };
-// 既定値（Share の URL には既定値と違う項目だけを書く。ランダムに決める前に写しておく）
+// 既定値（Share の URL には既定値と違う項目だけを書く。スマホ版の上書き・ランダムに決める前に写しておく）
 const DEFAULTS = structuredClone(CONFIG);
+if (MOBILE) {
+  CONFIG.camMirror = false; // 最初は後ろのカメラ
+  CONFIG.fit = 'cover';     // 縦長の画面いっぱいに映す（下のボタンの列と重なっても余白が出ない）
+}
 // ルールの味付け → エンジンの設定
 const FLAVORS = {
   'none':         { ruleMorph: false, regionRules: false },
@@ -101,7 +111,8 @@ const FLAVORS = {
 //   最小：短辺の 0.5%（短辺が約200マス。写真の大きさに関係なくマスの数が一定になり、重さも一定）
 //   最大：短辺の 6.25%（短辺が16マス。これより粗いと領域に分けたときに CA らしさが出にくい）。
 //   Quadtree は 2%（短辺が50マス）。マスが少ないと割る余地がなく、均一な格子に近くなる
-const CELL_MIN_FRAC = 0.005, CELL_MAX_FRAC = { bsp: 0.0625, quadtree: 0.02 }, CELL_MIN_PX = 4;
+// スマホ版は最小を短辺の 1%（マスの数が 1/4。カメラの分類を毎世代作り直すので、重さを抑える。実機での値は未確認）
+const CELL_MIN_FRAC = MOBILE ? 0.01 : 0.005, CELL_MAX_FRAC = { bsp: 0.0625, quadtree: 0.02 }, CELL_MIN_PX = 4;
 // 大きい領域ほど still に、小さい領域ほど分裂しやすくする（エンジンの sizeBias。GUI には出さない）
 const SIZE_BIAS = 1;
 const cellMaxFrac = () => CELL_MAX_FRAC[CONFIG.regionLayout] ?? CELL_MAX_FRAC.bsp;
@@ -133,7 +144,7 @@ let pendingCellFrac = Math.exp(rand(Math.log(RANDOM_CELL_FRAC[0]), Math.log(RAND
 // Share の URL から開いたとき：パラメータをランダムの初期値より優先する（GUI を作る前に入れる）。
 // 写真・カメラ・世代は引き継がない。cellSize は写真の短辺に対する割合（cell）で受け取る。
 // 範囲・選択肢の確認は GUI を作ったあと（validateShared）
-const SHARE_SKIP = ['cellSize', 'camera', 'camMirror', 'camDevice'];
+const SHARE_SKIP = ['cellSize', 'camera', 'camMirror', 'camDevice', 'camFacing'];
 const shared = decodeParams(location.search, DEFAULTS, { skip: SHARE_SKIP });
 {
   if (shared.patRules) shared.patRules = shared.patRules.filter((r) => r in PAT_RULES);
@@ -141,7 +152,7 @@ const shared = decodeParams(location.search, DEFAULTS, { skip: SHARE_SKIP });
   for (const k of ['digitColor', 'shrinkColor']) if (k in shared && !/^#[0-9a-f]{6}$/i.test(shared[k])) delete shared[k];
   if ('kanaText' in shared) shared.kanaText = formatGlyphText(parseGlyphText(shared.kanaText));
   Object.assign(CONFIG, shared);
-  const cell = Number(new URLSearchParams(location.search).get('cell'));
+  const cell = Number(QS.get('cell'));
   if (cell > 0 && cell < 1) pendingCellFrac = cell; // 範囲の外なら updateCellRange が寄せる
 }
 const ANALYSIS_SUB = 4;     // 平均色の解析解像度（1マスを最大 N×N px で見る）
@@ -149,6 +160,7 @@ const MAX_STEPS_PER_FRAME = 8; // 追いつけない分は捨てる（ゆっく�
 
 const canvas = document.getElementById('view');
 const renderer = new Renderer(canvas);
+if (MOBILE) renderer.maxDpr = 2; // 3 倍の画面でも 2 倍で描く（画素数が 4/9）
 const borders = new RegionBorders(document.getElementById('region-borders'));
 
 let bitmap = null, imgName = '';
@@ -158,7 +170,7 @@ let camFrame = null;  // カメラのフレームを毎回描くキャンバス 
 let sim = null;
 let playing = true;
 let acc = 0;          // 次の世代までの端数（世代単位）
-let status = 'Drop an image';
+let status = MOBILE ? '' : 'Drop an image';
 let uiVisible = true;
 let depthRise = 0;    // 擬似3D の立ち上がり（0〜1。止めてから伸びる）
 
@@ -452,6 +464,7 @@ function frame(t) {
   renderer.draw(CONFIG.fit);
   borders.draw(CONFIG.regionBorders, renderer.grid, sim?.regions ?? [], CONFIG.fit, CONFIG.borderColor);
   updateInfo();
+  syncBar();
   requestAnimationFrame(frame);
 }
 
@@ -525,16 +538,35 @@ async function updateDevices() {
   if (!list.some((d) => d.id === CONFIG.camDevice)) CONFIG.camDevice = list[0]?.id ?? '';
   cDevice = fi.addBinding(CONFIG, 'camDevice', { label: '　└ Device', options: list.length ? opts : { 'Default': '' }, index });
   tip(cDevice, 'Camera to use (webcams, capture cards, virtual cameras)');
-  cDevice.hidden = !CONFIG.camera;
+  cDevice.hidden = MOBILE || !CONFIG.camera;
   cDevice.on('change', (ev) => { if (!guiSyncing && camera.on && ev.value !== camera.deviceId) startCamera(); });
 }
 const refreshInput = () => {
-  cMirror.hidden = !CONFIG.camera;
-  if (cDevice) cDevice.hidden = !CONFIG.camera;
+  cCamera.hidden = MOBILE; // スマホ版は常にカメラ
+  cMirror.hidden = MOBILE || !CONFIG.camera;
+  if (cDevice) cDevice.hidden = MOBILE || !CONFIG.camera;
+  cFacing.hidden = !MOBILE;
 };
 cCamera.on('change', (ev) => { if (!guiSyncing) setCamera(ev.value); });
 onRebuild(cMirror);
+// スマホ版：カメラの向き（Device・Mirror の代わり。前のカメラなら左右反転する）と、写真は PC で、のヒント
+const cFacing = list(fi, 'camFacing', 'Camera', { 'Back': 'environment', 'Front': 'user' });
+tip(cFacing, 'Back or front camera');
+cFacing.on('change', () => { if (!guiSyncing) setFacing(CONFIG.camFacing); });
+{
+  const hint = document.createElement('div');
+  hint.className = 'mobile-hint';
+  hint.textContent = 'To use your own photos, open this page on a PC (drag & drop an image there).';
+  fi.element.querySelector('.tp-fldv_c').appendChild(hint);
+}
 refreshInput();
+
+function setFacing(f) {
+  CONFIG.camFacing = f;
+  CONFIG.camMirror = f === 'user';
+  guiSync();
+  if (CONFIG.camera) startMobileCamera();
+}
 
 // cellSize は写真の短辺に対する割合を保つ（カメラと写真で短辺が違うので）
 function keepCellFrac(from, to) {
@@ -549,27 +581,31 @@ function setCamera(on) {
 }
 
 let camSeq = 0;
+// 成功したら true、失敗したらエラーの名前（スマホ版の最初の画面に出す）
 async function startCamera() {
   const seq = ++camSeq;
   ++loadSeq; // 読み込み中の写真があれば捨てる
   status = 'Starting camera…';
   try {
     if (!camera.on && bitmap) still = { bitmap, name: imgName };
-    await camera.start(CONFIG.camDevice);
-    if (seq !== camSeq || !CONFIG.camera) { if (seq === camSeq) camera.stop(); return; }
+    // スマホ版は向きで選び、長辺 1280 を目安にする（分類を毎世代作り直すので軽くする）
+    await camera.start(MOBILE ? '' : CONFIG.camDevice, MOBILE ? { facing: CONFIG.camFacing, size: 1280 } : {});
+    if (seq !== camSeq || !CONFIG.camera) { if (seq === camSeq) camera.stop(); return false; }
     CONFIG.camDevice = camera.deviceId;
     await updateDevices();
     guiSync();
     onCameraSize();
     status = 'Camera';
+    return true;
   } catch (e) {
     console.error(e);
-    if (seq !== camSeq) return;
+    if (seq !== camSeq) return false;
     camera.stop();
     CONFIG.camera = false;
     guiSync();
     refreshInput();
     status = `Camera unavailable (${e.name || e.message})`;
+    return e.name || e.message || 'Error';
   }
 }
 
@@ -935,6 +971,92 @@ function shareURL() {
   });
 }
 
+// ---------- スマホ版（下のボタンの列・タブのパネル・最初の画面） ----------
+// 最初の画面のボタン・前後の切り替え・アプリから戻ったときに使う。失敗したら最初の画面に戻して理由を出す
+async function startMobileCamera() {
+  const body = document.body, btn = document.getElementById('start-btn'), msg = document.getElementById('start-msg');
+  btn.disabled = true;
+  CONFIG.camera = true;
+  guiSync();
+  const r = await startCamera();
+  btn.disabled = false;
+  if (r === true) {
+    if (body.classList.contains('intro')) {
+      body.classList.remove('intro');
+      setPlaying(true);
+    }
+    return;
+  }
+  if (r === false) return; // 別の開始に追い越された
+  body.classList.add('intro');
+  btn.textContent = 'Try again';
+  msg.textContent = r === 'NotAllowedError'
+    ? 'Camera access was blocked. Allow the camera for this site in your browser settings, then try again.'
+    : r === 'NotFoundError' ? 'No camera was found on this device.' : `Could not start the camera (${r}).`;
+}
+
+function setupMobile() {
+  const body = document.body;
+  body.classList.add('mobile', 'intro');
+  document.getElementById('start-btn').addEventListener('click', startMobileCamera);
+
+  // 下のボタンの列
+  const bar = document.getElementById('bar');
+  const act = {
+    play: togglePlay,
+    shoot: rebuild, // R と同じ。カメラでは今のフレームで作り直す
+    seed: newSeed,
+    flip: () => setFacing(CONFIG.camFacing === 'user' ? 'environment' : 'user'),
+    save: savePNG,
+    full: toggleFullscreen,
+    params: () => body.classList.toggle('sheet'),
+  };
+  for (const b of bar.querySelectorAll('button')) {
+    b.addEventListener('click', () => {
+      act[b.dataset.act]();
+      b.classList.toggle('on', b.dataset.act === 'params' && body.classList.contains('sheet'));
+    });
+  }
+  // iPhone の Safari は要素のフルスクリーンができないので、できるときだけ出す（Android・iPad）
+  bar.querySelector('[data-act="full"]').hidden = !document.fullscreenEnabled;
+  // 右上のマーク：UI を出し入れする（H と同じ）
+  document.getElementById('ui-mark').addEventListener('click', toggleUI);
+
+  // パラメータのパネル：フォルダをタブで1つずつ出す。Status もタブの1つにする
+  const ui = document.getElementById('ui');
+  const folders = pane.children.filter((c) => typeof c.title === 'string' && 'expanded' in c);
+  ui.appendChild(statPane.element);
+  const tabs = document.createElement('div');
+  tabs.className = 'tabs';
+  ui.prepend(tabs);
+  const names = [...folders.map((f) => f.title), 'Status'];
+  const select = (i) => {
+    folders.forEach((f, j) => { f.hidden = j !== i; f.expanded = true; });
+    pane.element.style.display = i < folders.length ? '' : 'none';
+    statPane.element.style.display = i < folders.length ? 'none' : '';
+    [...tabs.children].forEach((t, j) => t.classList.toggle('on', j === i));
+    ui.scrollTop = 0;
+  };
+  names.forEach((n, i) => {
+    const t = document.createElement('button');
+    t.type = 'button';
+    t.textContent = n;
+    t.addEventListener('click', () => select(i));
+    tabs.appendChild(t);
+  });
+  select(names.indexOf('Motion'));
+}
+
+// 再生ボタンの表示を今の状態に合わせる（毎フレーム呼ぶ。変わったときだけ書き換える）
+const PLAY_ICON = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>PLAY</span>';
+const PAUSE_ICON = '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg><span>PAUSE</span>';
+let barPlaying = null;
+function syncBar() {
+  if (!MOBILE || barPlaying === playing) return;
+  barPlaying = playing;
+  document.querySelector('#bar [data-act="play"]').innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+}
+
 function newSeed() {
   CONFIG.seed = Math.floor(Math.random() * 1e6);
   guiSync();
@@ -949,11 +1071,27 @@ function savePNG() {
   const cv = renderer.snapshot();
   if (!cv) return;
   if (CONFIG.regionBorders) borders.drawOnto(cv, renderer.grid, sim.regions, CONFIG.borderColor); // 画面で見えているときは PNG にも入れる
-  cv.toBlob((blob) => {
+  cv.toBlob(async (blob) => {
     if (!blob) { status = 'PNG を書き出せませんでした'; return; }
+    const name = `kuva_s${seed}_g${String(gen).padStart(6, '0')}.png`;
+    // スマホ版は共有の画面から保存する（iOS ではダウンロードすると写真アプリではなく「ファイル」に入るため）。
+    // 共有できない・断られたときはダウンロードにする。キャンセルしたら何もしない
+    if (MOBILE) {
+      const file = new File([blob], name, { type: 'image/png' });
+      if (navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          status = `Shared ${name} (${cv.width}×${cv.height})`;
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+          console.error(e);
+        }
+      }
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `kuva_s${seed}_g${String(gen).padStart(6, '0')}.png`;
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     status = `書き出し ${a.download}（${cv.width}×${cv.height}）`;
@@ -965,6 +1103,28 @@ const AUTO_PAUSED = 'Paused (tab hidden)';
 function setPlaying(v) {
   playing = v;
   if (playing && status === AUTO_PAUSED) status = '';
+  syncWakeLock();
+}
+
+// スマホ版：再生中は画面を消さない（Wake Lock。ページが隠れるとブラウザが自動で外す）
+let wakeLock = null, wakeBusy = false;
+async function syncWakeLock() {
+  if (!MOBILE || !navigator.wakeLock || wakeBusy) return;
+  const want = playing && !document.hidden;
+  wakeBusy = true;
+  try {
+    if (want && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch (e) {
+    console.warn('Wake Lock', e); // 電池が少ないときなどは断られる
+  } finally {
+    wakeBusy = false;
+  }
 }
 
 // タブが見えなくなったら（タブの切り替え・最小化など）一時停止する。見えるようになっても自動では再開しない。
@@ -974,6 +1134,8 @@ document.addEventListener('visibilitychange', () => {
     setPlaying(false);
     status = AUTO_PAUSED;
   }
+  // スマホ版：アプリを切り替えるとカメラが止まることがあるので、戻ったら開き直す（そのフレームで作り直す）
+  if (!document.hidden && MOBILE && CONFIG.camera && !camera.live && !document.body.classList.contains('intro')) startMobileCamera();
 });
 
 function toggleFullscreen() {
@@ -1018,6 +1180,8 @@ window.addEventListener('drop', (e) => {
   if (camera.on) stopCamera(false);
   loadImage(f, f.name);
 });
+
+if (MOBILE) setupMobile();
 
 // 最初の写真：?img=URL があればそれ（開発用）、なければサンプル画像からランダムに1枚
 const q = new URLSearchParams(location.search).get('img');
