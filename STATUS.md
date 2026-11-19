@@ -8,5 +8,6 @@
 ## 2026-11-19 — Muse（きなこ）／ Muse 経由
 - やったこと: コーディング委任ワークフローの検証（Phase 0）を開始。AGENTS.md / STATUS.md / docs/decisions.md を新設する準備中
 - 決めたこと: 状態の正本はこのリポジトリに置く。CLAUDE.md はプロジェクト知識の正本として維持し、AGENTS.md は共通プロトコル＋参照に留める
-- 残り: Codex の認証、雛形ファイルの push / PR、Phase 1（小さいタスクを Muse → Codex で完走）
-- 次の一手: 認証完了後に Phase 1 のタスクを1つ選ぶ
+- 残り: Phase 1（小さいタスクを Muse → Codex で完走）
+- 次の一手: Phase 1 のタスクを1つ選ぶ
+- 追記（同日）: Codex 認証完了（ChatGPT サインイン）。雛形ファイルは PR #39 として push 済み。VM 上で `npm test` 72/72 パスを確認
