@@ -45,7 +45,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 | `src/render/renderer.js` | WebGL2。写真テクスチャと `src` テクスチャ（R32I）など（塗りつぶし・数字の分も）。`snapshot()` は PNG 書き出し用に、見えない描画先に元写真の範囲だけを描く |
 | `public/favicon.svg` | favicon。16×16 マスのドットの k の数行だけを横にずらしたもの（崩れた k） |
 | `samples/` | サンプル画像。開いたときにランダムに1枚を読み込み、I キーで次のサンプルへ（パラメータはそのまま。`loadSample`）。一覧は `import.meta.glob` でビルド時に作るので、置くだけで候補に入る。公開される（AI 生成の画像。埋め込みの XMP は生成元のラベルと ID だけ） |
-| `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ |
+| `src/main.js` | 画像の読み込み（サンプル、D&D、`?img=`）、GUI（Tweakpane v4）、キー操作、再生ループ、スマホ版（`setupMobile`） |
 | `experiments/regions.html` | 開発サーバ専用の比較ページ。同じ写真・seed・世代で「従来／分裂・合体／漏れ／両方」の4画面を並べる（Space・R・B、M で初期の分け方を BSP・Quadtree で切り替え、`?cells=` で短辺のマス数（既定 72。Quadtree は 200 くらいで見る）、写真のドロップ）。公開ビルドには入れていない |
 
 ## エンジンのパイプライン
@@ -118,7 +118,7 @@ kivi では CA の時間軸を画像の空間（縦 or 横）に並べて時空�
 - Tweakpane のモニターは `setInterval` で更新する。見えないページでは Chrome がタイマーを強く間引くので、ブラウザペインが画面に出ていないと Status パネルが更新されない（映像は動いている）。確かめるときは GUI のスライダーの値など、すぐ変わるものを見る
 - ブラウザペインが裏にあると requestAnimationFrame が 1〜2fps に間引かれ、実測の世代/秒が下がって見える。測るときはタブを前面に出す
 
-- 操作ボタンは置かない（操作はキーだけ）。キーの一覧はパネルの一番下に文字で出す（`.keys`。パネルの中身の入れ物 `.tp-rotv_c` に入れているので、畳むと一緒に隠れる）
+- 操作ボタンは置かない（操作はキーだけ。スマホ版だけは例外で下にボタンの列）。キーの一覧はパネルの一番下に文字で出す（`.keys`。パネルの中身の入れ物 `.tp-rotv_c` に入れているので、畳むと一緒に隠れる）
 - サイトを開いたときに seed・K（4〜10）・cellSize（写真の短辺の 1%〜6%、対数で一様）をランダムに決める（動き方は常に Flow から始める）。cellSize は最初の写真を読み込んだときに決まる（`pendingCellFrac`）。あとから写真をドロップしたときは変えない
 
 Pattern フォルダ（模様）：模様のレイヤー（`patFrac`、`patRules`）。写真のタイルを運ぶ CA とは別に、2状態の基本セルオートマトンを一部の領域に重ねる（`mask`、`stepPattern`）。計算は二重だが、模様は2状態で一部の領域だけなので軽い。描画は1回（マスごとに、模様が1なら模様のタイル、0なら写真の CA のタイルを描く）。狙いは「全部ではなく部分的に、シェルピンスキーのようなルールの模様が見える」こと
@@ -222,6 +222,20 @@ Quadtree（`subdivideQuadtree`）：
 - `getUserMedia` は安全な接続（localhost・https）でだけ使える。GitHub Pages は https なので使える
 - Claude のブラウザペインにはカメラがないので、確かめるときは `getUserMedia` を `canvas.captureStream()` に差し替える
 
+## スマホ版（試作）
+
+- 判定は `pointer: coarse`（指で操作する端末。iPad も含む）。`?mobile=1` / `?mobile=0` で切り替えられる（PC で確かめる用）。`MOBILE` のとき body に `.mobile` を付け、CSS で出し分ける
+- 入力は**カメラだけ**（ユーザーの判断）。写真は PC で、というヒントを最初の画面と Input タブに出す。巨大な写真・HEIC・ファイル選択の課題を避けるため
+- 最初の画面（`#start`、body の `.intro`）：後ろでサンプルが流れ、Start camera を押してからカメラを開く（iOS ではタップから呼ぶのが確実）。断られた・カメラがないときは最初の画面に戻して理由を出す（`startMobileCamera`。`startCamera` は成功で true、失敗でエラーの名前を返す）
+- カメラは向きで選ぶ（`camFacing`、初期値は後ろ。前なら Mirror を ON）。Device・Mirror・Camera の項目は隠す。解像度は長辺 1280 を目安（PC は 1920）。アプリから戻ってトラックが終わっていたら開き直す（`camera.live`）
+- **操作ボタンを置かない方針の例外**：スマホ版だけ下にボタンの列（`#bar`：再生・SHOOT（R）・SEED・FLIP・SAVE・FULL・PARAMS）と、右上の UI を出し入れするマーク（`#ui-mark`、H と同じ。最初は k 1文字だったが目立たないので `kuva` と書く。ユーザーの希望）。FULL は `document.fullscreenEnabled` のときだけ（iPhone の Safari はできない）
+- パラメータのパネルは下からせり出す（body の `.sheet`）。フォルダはタブで1つずつ出し（`folder.hidden`）、Status もタブの1つにする（`statPane.element` を `#ui` に移す）。パネルの見出し・フォルダの見出し・キー一覧・左下のリンクは隠す。行の高さは `--tp-container-unit-size` で 30px に
+- 保存は共有の画面（`navigator.share({ files })`）。共有できなければダウンロード。再生中は Wake Lock で画面を消さない
+- 重さ対策：描画の解像度は devicePixelRatio 2 まで（`renderer.maxDpr`）、cellSize の最小は短辺の 1%、Fit の初期値は Cover。実機（iPhone）でパラメータをいくつか触って大きな問題はなかった。FLIP・SAVE（共有の画面）も動いた。速さの数値・長時間の発熱は未確認
+- 実機の確認は `npm run dev:phone`（`vite.config.js`）。同じネットワークから https で開ける（`.cert/` に自己署名の証明書をその場で作る。IP が変わったら作り直す。コミットしない）。スマホの JS のエラーは画面の上の赤い帯とターミナルに出る（`[info]` はターミナルだけ）。スマホから読み込んだファイルもターミナルに出る。公開ビルドには入らない
+  - 分かったこと：iPhone（iOS 18.7）の Safari で動いた。会社の Wi-Fi は端末どうしの通信を止めていて届かず、Mac を iPhone のテザリングにつないだら開けた。iPhone の Chrome はローカルネットワークの許可がないと「このサイトにアクセスできません」になる
+- viewport の指定と `100dvh` は PC にも入っている（PC の見た目は変わらない）。`maximum-scale=1` は iOS が小さい入力欄で拡大するのを止めるため
+
 ## マスの文字（Glyphs）
 
 - 賑やかし。正方形のマス（Aspect ×1、`cw === ch`）のときだけ、マスに 0〜9 を重ねる。Aspect が ×1 以外なら GUI を隠して描かない（値は残す）。描画だけに効く（CA の状態・ゴールデンに影響しない）。PNG 書き出しにも入る
@@ -256,7 +270,7 @@ Quadtree（`subdivideQuadtree`）：
 | 操作手段 | GUI（Tweakpane v4、kivi と同じ）＋キーボードショートカット。MIDI は最初は考えない |
 | 音への反応 | 最初はなし |
 | 決定性 | 必須。同じ写真・パラメータ・seed なら同じ映像 |
-| 対象ブラウザ | Chrome デスクトップのみ |
+| 対象ブラウザ | Chrome デスクトップ。スマホ（iOS Safari・Android Chrome）はカメラ入力だけの試作 |
 | 技術構成 | Vite（素の JS、TypeScript なし）。依存は Tweakpane のみ。描画は素の WebGL2 |
 | リポジトリ | `ogrew/kuva`（公開）。GitHub Pages で https://ogrew.github.io/kuva/ に公開（main への push で自動デプロイ） |
 | 公開に関して | 履歴を公開前に書き換え、コミットの作者メールは GitHub の noreply（`21966381+ogrew@users.noreply.github.com`、このリポジトリの git 設定）にした。個人のメールアドレス・ローカルのパス・秘密情報をコミットに入れないこと。サンプル画像を足すときは、埋め込みのメタデータ（EXIF の位置情報など）も確かめる |
